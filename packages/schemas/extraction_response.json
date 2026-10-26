@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FIN_SPY Extraction Response for Muse Spark structured output",
+  "description": "Appendix B per homework, line-ID grounding anti-hallucination",
+  "type": "object",
+  "required": ["statement", "rows", "unaccounted_lines"],
+  "properties": {
+    "statement": {
+      "type": "object",
+      "required": ["currency"],
+      "properties": {
+        "bank": {"type": ["string","null"]},
+        "account_mask": {"type": ["string","null"]},
+        "period_start": {"type": ["string","null"], "format": "date"},
+        "period_end": {"type": ["string","null"], "format": "date"},
+        "currency": {"type": "string", "enum": ["ZAR"]},
+        "opening_balance": {"type": ["string","null"], "description": "Decimal string, e.g. '12340.55'"},
+        "closing_balance": {"type": ["string","null"]}
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["line_ids","date","description","amount","direction","source_quote"],
+        "properties": {
+          "line_ids": {"type": "array", "items": {"type": "string", "pattern": "^L\\d+$"}, "minItems": 1},
+          "date": {"type": "string", "format": "date"},
+          "description": {"type": "string"},
+          "amount": {"type": "string", "description": "Decimal string positive, e.g. '450.00'"},
+          "direction": {"type": "string", "enum": ["debit","credit"]},
+          "balance_after": {"type": ["string","null"]},
+          "source_quote": {"type": "string", "description": "Exact text from cited lines, verbatim check"}
+        }
+      }
+    },
+    "unaccounted_lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["line_id","reason"],
+        "properties": {
+          "line_id": {"type": "string", "pattern": "^L\\d+$"},
+          "reason": {"type": "string", "enum": ["header","footer","noise","unreadable"]}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

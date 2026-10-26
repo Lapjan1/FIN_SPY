@@ -1,0 +1,14 @@
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "command": "echo \"[HOOK PreToolUse] $TOOL_NAME $TOOL_ARGS\" >> logs/hooks.log",
+      "description": "Log every tool use for forensic audit"
+    },
+    {
+      "event": "PostToolUse",
+      "command": "echo \"[HOOK PostToolUse] $TOOL_NAME at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" >> logs/hooks.log",
+      "description": "Post tool audit"
+    }
+  ]
+}

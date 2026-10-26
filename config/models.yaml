@@ -1,0 +1,75 @@
+# Models config - not code, per AGENTS.md. Front-loaded rules.
+
+defaults:
+  extraction_effort: "medium"
+  classification_effort: "low"
+  explanation_effort: "medium"
+  temperature: 0.2
+  max_tokens: 8192
+
+providers:
+  freellmapi:
+    base_url: "http://127.0.0.1:3001/v1"
+    api_key_env: "FREELLMAPI_API_KEY"
+    models:
+      spark: "muse-spark-1.1"
+      spark_dev: "auto"  # auto router
+
+  ollama:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key_env: "OLLAMA_API_KEY"
+    optional: true
+    models:
+      llama_local: "llama3.2:latest"
+      qwen_local: "qwen2.5:7b"
+
+  meta_official:
+    base_url: "https://api.llama.com/compat/v1"
+    api_key_env: "META_API_KEY"
+    models:
+      spark: "muse-spark-1.3"
+      spark_contributor: "muse-spark-1.3-contributor"  # ONLY synthetic
+      wonder: "muse-wonder-1.0"
+      image: "muse-image-1.0"
+      sam: "sam-3.1"
+
+capabilities:
+  muse-spark-1.1:
+    max_context: 128000
+    supports_images: true
+    supports_parallel_tools: true
+    supports_structured_output: true
+    effort_levels: ["low","medium","high"]
+  muse-spark-1.3:
+    max_context: 1048576
+    supports_images: true
+    supports_parallel_tools: true
+    supports_structured_output: true
+    effort_levels: ["low","medium","high","xhigh"]
+  llama3.2:latest:
+    max_context: 131072
+    supports_images: false
+    supports_parallel_tools: true
+    effort_levels: ["low","medium","high"]
+  sam-3.1:
+    max_context: 0
+    supports_images: true
+    is_segmentation: true
+
+routing:
+  # local-first per Flowchart #2
+  policy: "local_first_hosted_on_approval"
+  privacy_gate: true
+  show_exact_text_before_hosted: true
+  rate_limit_rpm: 100
+  per_tenant_fairness: true
+  retries: 3
+
+cost_guards:
+  per_document_token_ceiling: 15000
+  per_tenant_pages_per_month:
+    free: 20
+    individual: 200
+    sme: 1000
+  global_daily_budget_usd: 10
+  kill_switch_to_no_ai: true

@@ -39,8 +39,60 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 package-lock.json
+pnpm-lock.yaml
+.yarn-integrity
+
+# Secrets / keys - NEVER commit
+.env
+*.env
+*.env.local
+*.key
+*.pem
+secrets/
+certs/*.pem
+certs/*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+uv.lock
+
+# FIN_SPY specific
+data/vault/
+data/*.db
+data/samples/*.pdf
+!data/samples/.gitkeep
+logs/*
+!logs/.gitkeep
+models/
+*.gguf
+vendor/
+.fin_spy_tmp/
+
+# IDE / Muse / OpenCode
+.muse/worktrees/
+.opencode/
+.claude/local/
+*.db-journal
+*.sqlite3
+
+# Package manager
+# (already above)
 
 # Misc
 coverage/
 *.zip
 *.tar.gz
+!data/samples/*.zip
+.DS_Store
+Thumbs.db
+.env
+*.env
+*.env.local
+config.local.json

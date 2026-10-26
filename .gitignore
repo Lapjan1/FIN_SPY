@@ -1,0 +1,46 @@
+# Generic / OS
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*~
+
+# IDE / editors
+.vscode/
+.idea/
+*.suo
+*.csproj.user
+*.user
+
+# Build / output artifacts
+bin/
+obj/
+out/
+dist/
+build/
+*.exe
+*.dll
+*.pdb
+*.class
+*.o
+*.pyc
+__pycache__/
+
+# Environment / secrets
+.env
+*.env
+*.env.local
+config.local.json
+
+# Package manager
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Misc
+coverage/
+*.zip
+*.tar.gz

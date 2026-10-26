@@ -24,6 +24,10 @@ dependencies = [
   "cryptography>=42",
   "pillow>=10",
   "python-dateutil>=2.8",
+  "passlib[bcrypt]>=1.7",
+  "bcrypt>=4.0",
+  "psycopg2-binary>=2.9",
+  "requests>=2.31",
 ]
 
 [project.optional-dependencies]

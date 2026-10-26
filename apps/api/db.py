@@ -39,7 +39,8 @@ class DbHandle:
             self.cursor_factory = psycopg2.extras.RealDictCursor
         else:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(str(DB_PATH))
+            # check_same_thread=False for FastAPI TestClient multi-thread per clearmind pattern + threading issue fix
+            self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA foreign_keys=ON;")

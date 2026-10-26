@@ -453,12 +453,25 @@ def get_settings(user_id: int = Depends(require_admin)):
 
 @app.get("/privacy")
 def privacy():
-    return {"message": "Privacy - POPIA compliance, see apps/web/src/app/legal/privacy.tsx template from clearmind privacy.html - data on Railway/ Supabase isolated by tenant_id+user_id, HTTPS, Meta standard tier no training, deletion 30 days, legal hold flag blocks deletion"}
+    # Serve real POPIA content from docs/legal/privacy.md copied from clearmind privacy.html
+    doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "privacy.md"
+    content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Privacy - POPIA compliance, see docs/legal/privacy.md"
+    return {"page": "privacy", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/privacy.html", "content_markdown": content[:5000], "full_path": str(doc_path), "compliance": "POPIA", "storage": "Railway/Supabase isolated by tenant_id+user_id", "ai_disclosure": "Meta standard tier no training, contributor only synthetic", "retention": "30 days deletion, legal_hold flag blocks deletion"}
 
 @app.get("/terms")
 def terms():
-    return {"message": "Terms - after free trial 20 pages, continued use requires paid subscription R149/R599, Paystack, auto-renew, cancel anytime, SA law"}
+    doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "terms.md"
+    content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Terms"
+    return {"page": "terms", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/terms.html", "content_markdown": content[:5000], "billing": "Free 20 pages R0, Individual 200 R149/mo, SME 1000 R599/mo", "law": "South Africa", "ai_disclosure": "court-ready per ECTA s15, not guaranteed"}
 
 @app.get("/refund")
 def refund():
-    return {"message": "Refund - digital immediate access, no refunds partial, exception >48h downtime pro-rata"}
+    doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "refund.md"
+    content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Refund"
+    return {"page": "refund", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/refund.html", "content_markdown": content[:5000], "free_trial": "20 pages", "exception": ">48h downtime pro-rata"}
+
+@app.get("/ai-disclosure")
+def ai_disclosure():
+    doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "ai_disclosure.md"
+    content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "AI Disclosure"
+    return {"page": "ai-disclosure", "content_markdown": content[:8000], "models": ["muse-spark-1.3 standard NOT contributor", "muse-wonder-1.0", "muse-image-1.0", "sam-3.1"], "prompts_versioned": "prompts/*.md with SHA256 header", "anti_hallucination": "line-ID grounding + quote validation + reconciliation gate"}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.app/railway.json",
+  "build": {
+    "builder": "nixpacks",
+    "buildCommand": "pip install -e . && pnpm --dir apps/web install && pnpm --dir apps/web build"
+  },
+  "deploy": {
+    "startCommand": "uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/health/ready",
+    "healthcheckTimeout": 30,
+    "restartPolicyType": "always",
+    "restartPolicyMaxRetries": 3
+  }
+}

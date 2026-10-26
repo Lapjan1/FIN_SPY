@@ -83,18 +83,14 @@ def require_login(request: Request) -> int:
 
 def require_admin(request: Request) -> int:
     uid = require_login(request)
-    db = get_db()
-    cur = db.execute("SELECT id, role, email FROM users WHERE id=?", (uid,))
-    row = cur.fetchone()
-    if not row:
+    user = get_user(uid)
+    if not user:
         raise HTTPException(401, "User not found")
-    # dict or sqlite Row
-    role = row["role"] if isinstance(row, dict) else row[2] if len(row)>2 else ""
-    email = row["email"] if isinstance(row, dict) else row[2] if isinstance(row, dict) else ""
+    role = user.get("role", "")
+    email = user.get("email", "")
     # Check role or ADMIN_EMAIL allowlist per clearmind app.py:56-61
     admin_email = env_or_setting("admin_email", "")
-    user_email = (row["email"] if isinstance(row, dict) else row[1]) if hasattr(row, '__getitem__') else ""
-    if role == "admin" or (admin_email and user_email == admin_email):
+    if role == "admin" or (admin_email and email.lower() == admin_email.lower()):
         return uid
     raise HTTPException(403, detail="Admin required")
 

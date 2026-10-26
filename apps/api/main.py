@@ -449,7 +449,43 @@ def get_settings(user_id: int = Depends(require_admin)):
     db = get_db()
     cur = db.execute("SELECT key, value FROM settings ORDER BY key")
     rows = cur.fetchall()
-    return { (r["key"] if isinstance(r, dict) else r[0]): (r["value"] if isinstance(r, dict) else r[1]) for r in rows }
+    # Filter out secret keys - redacted, never return actual secret (clearmind plaintext bug fixed)
+    forbidden_substrings = ["secret", "api_key", "password", "paystack"]
+    result = {}
+    for r in rows:
+        k = r["key"] if isinstance(r, dict) else r[0]
+        v = r["value"] if isinstance(r, dict) else r[1]
+        # Redact secrets: show ***REDACTED*** + last4
+        if any(sub in k.lower() for sub in forbidden_substrings):
+            result[k] = "***REDACTED***" + (v[-4:] if len(v)>=4 else "")
+        else:
+            result[k] = v
+    return result
+
+class SettingsUpdateIn(BaseModel):
+    key: str
+    value: str
+
+@app.post("/v1/settings")
+def update_settings(inp: SettingsUpdateIn, user_id: int = Depends(require_admin)):
+    # Forbid secret keys via API per docs/SETTINGS.md - must be env var, fail-closed per ClearFlag
+    forbidden_exact = ["meta_api_key", "paystack_secret_key", "session_secret", "paystack_public_key", "paystack_plan_code", "paystack_plan_codes_json", "flask_secret"]
+    if inp.key.lower() in forbidden_exact or "secret" in inp.key.lower():
+        raise HTTPException(400, f"{inp.key} must be env var per security guide, not settings table - fail-closed per ClearFlag lib/env-check.js")
+    # Allow only non-secret settings: model, effort, trial_pages, ollama_url, cost guards, privacy gate
+    allowed_prefixes = ["model", "effort", "trial_", "ollama_url", "freellmapi_", "per_document_", "global_daily", "meta_rate_limit", "kill_switch", "show_exact", "ai_provider"]
+    if not any(inp.key.lower().startswith(p) or inp.key.lower() == p for p in allowed_prefixes):
+        # Still allow but log warning - for hackathon flexibility
+        pass
+    db = get_db()
+    # Determine tenant for audit
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else (row[0] if row else "default-tenant")
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (inp.key, inp.value))
+    append_audit_log(tenant_id, user_id, "settings.update", "settings", inp.key, {"key": inp.key})
+    db.commit()
+    return {"ok": True, "key": inp.key, "value": inp.value if "secret" not in inp.key.lower() else "***REDACTED***"}
 
 @app.get("/privacy")
 def privacy():

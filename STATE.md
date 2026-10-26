@@ -1,22 +1,36 @@
-# STATE (updated 2026-10-26)
+# STATE (updated 2026-10-26 - v0.2.0 DB+auth+paystack)
 
 ## Working
-- Git repo initialized at C:\Users\dshan\Downloads\Projects\FIN_SPY, origin https://github.com/Lapjan1/FIN_SPY.git, branch main
-- Bootstrap scaffold defined in plan, build mode active
-- Homework docs analyzed: forensic bookkeeping SaaS + security playbooks
+- Git: 3 commits during hackathon window Oct26 (771812d initial, 1770fe8 scaffold v0.1.0-baseline, 2a49ac6 DB+auth+paystack) - origin https://github.com/Lapjan1/FIN_SPY.git branch main, clean except data/samples synthetic CSV untracked (ignored via .gitkeep)
+- Scaffold: AGENTS.md hard rules front-loaded, README hero flow + Mermaid + Meta model matrix, docs/PLAN,MODULES,FLOWS,UI_SPEC,TROUBLESHOOTING,METHOD_STATEMENT, decisions/0001 fresh build, .agents/memory index, .claude/hooks.json audit logging, config/models.yaml capabilities routing local-first privacy gate + cost guards
+- Monorepo: apps/web Next.js typed api.ts SourceViewer KpiCards, apps/api FastAPI /v1 health/ready, apps/worker llm/client.py Meta adapter capabilities effort map local-first, parsers/base.py SA amount R space thousands comma decimals (paren) Cr/Dr, spy/detectors.py + debt.py Decimal snowball/avalanche, packages/schemas extraction_response.json Appendix B manifest.json Appendix C, prompts/ versioned with hash, scripts/verify_pack.py independent verifier + generate_sa_statements.py FNB/STDB/ABSA synthetic
+- DB+Auth+Paystack adapter based on clearmind-ai pattern but upgraded:
+  - apps/api/db.py dual SQLite/Postgres is_postgres() _translate ?->%s datetime('now')->LOCALTIMESTAMP INSERT OR REPLACE->ON CONFLICT, WAL+FK, tables tenants/users(paystack cols)/settings/reset_tokens/source_documents content-hash vault/pages/extraction_runs/source_spans bbox/transactions fingerprint SHA256(date|amount|desc_norm)/transaction_sources/classifications/accounts/journal_entries/lines debits=credits/flags/audit_log hash-chain prev_hash/row_hash SHA256(prev||canonical_json) append-only/reports/subscriptions trial pages/usage_events/webhook_events idempotent/partner_profiles
+  - Hash-chain helpers compute_row_hash, get_last_audit_hash, append_audit_log
+  - apps/api/auth.py bcrypt not SHA256 hex (clearmind weak database.py:308), FastAPI Depends require_login/require_subscription/require_admin, is_admin allowlist ADMIN_EMAIL, create_user tenant creation, verify_user, get_trial_pages_remaining free 20 vs clearmind 5 sessions, 402 trial exhausted, reset token uuid hex 1h expiry used flag, check_session_secret fail-closed per ClearFlag
+  - apps/api/paystack.py env_or_setting, has_paystack sk_test|sk_live bugfix clearmind PROJECT_NOTES.md:52, plan mapping free 20 R0 individual 200 R149 sme 1000 R599 vs clearmind R370, timing-safe verify_paystack_signature hmac.compare_digest SHA512 raw body per ClearFlag, initialize_transaction callback_url _external, verify_transaction, handle_webhook_event charge.success subscription.create invoice.success disable -> active/free upsert subscriptions builds_allowed reset
+  - apps/api/main.py wired startup init_db() + check_session_secret, auth routes register/login/forgot/reset/me, health/ready backend+has_paystack, documents upload require_subscription trial check audit_log hash-chain isolation tenant_id, list filter tenant, sources isolation guard 403 cross-tenant, dashboard trial remaining, reports isolation, billing plans/checkout/callback/webhook raw body timing-safe idempotent, audit read-only, privacy/terms/refund placeholders
+- Tests: 12 passed - 6 smoke + 6 new test_db_dual_init tables exist, test_hash_chain prev chain, test_bcrypt_not_sha256 $2b$ not 64 hex, test_user_isolation tenant-a can't see doc-b, test_paystack_timing_safe constant time, test_trial_pages 20->15->None unlimited
+- Secrets audit: .env ignored, data/vault/ ignored, data/*.db ignored fin_spy.db ignored, .env.example present names only, no .key/.pem in repo, banned imports check no FINSPIB/FNBP, CI .github/workflows/ci.yml secret scan + banned import
+- Synthetic data: scripts/generate_sa_statements.py generated 6 CSVs FNB/STDB/ABSA + txt placeholders for golden tests
 
 ## In progress
-- Full fresh scaffold creation (AGENTS.md done, README/.gitignore updating)
-- Next: docs/, .agents/memory, .claude/hooks, apps/web/api/worker, packages, prompts, tests
-- Verify with `uv run pytest -q` before commit
+- Privacy/terms/refund web templates - API placeholders done, need apps/web/src/app/legal pages copying clearmind privacy.html POPIA template
+- Frontend auth UI - API has /v1/auth/* + X-User-Id dev header, need Next.js login/register pages that call typed api.ts
+- Extraction line-ID grounding v1 wiring - prompts/extract_sa_bank_v1.md versioned + schema ready, need apps/worker/parsers/fnb.py deterministic + LLM fallback + reconciliation gate opening+sum=closing
+- Ledger-core dynamic COA seeding + journal posting debits=credits + trial balance live SUMIFS
+- Dashboard ECharts PowerBI look + drill-to-bbox pdf.js highlight overlay - components SourceViewer KpiCards exist but not wired to live data
+- Reports Excel live formulas + signed PAdES PDF pyHanko + FreeTSA + Evidence Pack ZIP + verify_pack.py independent verifier (script exists but not end-to-end tested)
+- KPI + debt spy engine + chat tool calling over DB - debt.py Decimal maths exists but API only mock ordering
+- Deployment: ops/docker-compose.yml minimal, need railway.json + render.yaml healthCheckPath /health/ready per ClearFlag pattern, env guard REQUIRED vs OPTIONAL, uptime ping for Supabase free idle-pause
 
 ## Broken
-- None yet - fresh repo
+- ruff not installed in global python (needs uv sync dev), pyright not run yet, pnpm web lint not run (apps/web package.json exists but node_modules not installed)
 
 ## Blocked
-- META_API_KEY for official muse-spark-1.3 / wonder / image - expected 1-2 days from Cerebral Valley. Mitigation: use freellmapi/muse-spark-1.1 (dev) + ollama-local/llama3.2 fallback. Adapter already planned.
+- META_API_KEY official muse-spark-1.3/wonder/image still pending 1-2 days from Cerebral Valley. Mitigation active: freellmapi/muse-spark-1.1 dev at http://127.0.0.1:3001/v1 + ollama-local/llama3.2 fallback via config/models.yaml routing local_first_hosted_on_approval privacy_gate show_exact_text_before_hosted true. No Contributor tier for real docs per AGENTS.md.
 
 ## Next 3 steps
-1. Complete root files (README, .env.example, .editorconfig)
-2. Create docs/ with PLAN, MODULES, FLOWS, UI_SPEC, TROUBLESHOOTING, METHOD_STATEMENT, decisions/0001
-3. Create apps/web (Next.js) + apps/api (FastAPI) + apps/worker (spy engine + meta client) skeletons + tests golden + ci workflow, then commit v0.1.0-baseline
+1. Add ADR 0002 clearmind adapter + docs/AUTH_PAYSTACK.md documenting auth flow, DB schema, paystack webhook timing-safe, trial pages vs clearmind 5 sessions, bcrypt upgrade, hash-chain audit - makes this commit documented hackathon grade
+2. Build privacy/terms/refund templates in docs/legal/ and apps/web/src/app/legal/ copying clearmind templates but SA forensic wording from docs/METHOD_STATEMENT.md
+3. Implement extraction v1: apps/worker/parsers deterministic FNB parser + LLM fallback line-ID grounding per prompts/extract_sa_bank_v1.md + validation schema + quote exists + reconciliation gate, persist to source_spans/transactions, then wire dashboard drill-to-bbox via /v1/transactions/{id}/sources

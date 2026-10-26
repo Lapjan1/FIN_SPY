@@ -94,12 +94,25 @@ docs/PLAN,MODULES,FLOWS,UI_SPEC,decisions,METHOD_STATEMENT
 - Hooks in .claude/hooks.json run OUTSIDE sandbox - read every command.
 
 ## Submission Checklist (Nov 4 12:00 SAST target)
-- [ ] Live demo link (Railway/Vercel)
-- [ ] Video 2-3 min
-- [ ] Repo public with commits during Oct26-Nov4 (evidence of Meta build)
-- [ ] README with Meta model usage proof
-- [ ] .env.example, no secrets
-- [ ] Verification script passes hashes+TSA
+- [x] Repo public with commits during Oct26-Nov4 (evidence of Meta build) - 771812d,1770fe8,2a49ac6 all Oct26, pytest 12 passed
+- [x] README with Meta model usage proof - table Spark 1.3/Wonder/Image/SAM3.1 + adapter apps/worker/llm/client.py + config/models.yaml routing local_first
+- [x] .env.example, no secrets - names only, git check-ignore .env, data/vault/, data/*.db, no .key/.pem, banned imports check no FINSPIB/FNBP
+- [x] Verification script - scripts/verify_pack.py independent SHA256+TSA per Appendix D + generate_sa_statements.py synthetic SA banks
+- [x] DB-first + hash-chain audit - apps/api/db.py dual SQLite/Postgres WAL+FK, audit_log prev_hash/row_hash SHA256(prev||canonical_json) append-only, tests test_hash_chain, test_user_isolation cross-tenant 403
+- [x] Auth + Paystack adapter based on clearmind pattern but upgraded - bcrypt not SHA256, timing-safe HMAC SHA512 raw body, trial pages 20/200/1000, fail-closed SESSION_SECRET, tests bcrypt/isolation/timing-safe/trial
+- [ ] Live demo link (Railway/Vercel) - ops/docker-compose.yml minimal, need railway.json healthCheckPath /health/ready per ClearFlag pattern, TODO Day9
+- [ ] Video 2-3 min - hero flow in README, need recording after dashboard drill-to-bbox + signed pack verification green
+- [ ] Privacy/terms/refund web templates - API placeholders /privacy /terms /refund returns message, need apps/web legal pages copying clearmind privacy.html POPIA but forensic wording from docs/METHOD_STATEMENT.md
+- [ ] Extraction line-ID grounding v1 - prompts/extract_sa_bank_v1.md versioned + schema ready, need parsers/fnb.py deterministic + LLM fallback + reconciliation gate opening+sum=closing, persist to source_spans/transactions
+- [ ] Dashboard ECharts PowerBI look + drill-to-bbox + KPI + debt - components SourceViewer KpiCards exist but not wired to live DB
+- [ ] Deployment env guards REQUIRED vs OPTIONAL + uptime ping Supabase free idle-pause
+
+## Current Progress v0.2.0 (see STATE.md, CHANGELOG.md, docs/AUTH_PAYSTACK.md)
+- DB: dual + hash-chain audit + isolation tests
+- Auth: bcrypt + FastAPI deps require_login/require_subscription + trial pages + reset token + fail-closed secret
+- Paystack: timing-safe verify + checkout/callback/webhook idempotent + plan mapping
+- Tests: 12 passed
+- Next: privacy templates, frontend auth, extraction line-ID, ledger-core dynamic COA, dashboard drill, reports signed PAdES + TSA, KPI debt spy, deployment
 
 ## License
 MIT

@@ -475,6 +475,24 @@ def get_excel_workbook(user_id: int = Depends(require_login)):
     append_audit_log(tenant_id, user_id, "report.excel", "reports", wb["file_key"], {"sha256": wb["sha256"]})
     return wb
 
+@app.get("/v1/reports/auditor-csv")
+def get_auditor_csv(user_id: int = Depends(require_login)):
+    """
+    CSV for auditor to input in their bookkeeping package per user decision:
+    Export package the auditor can use the data export to csv and input in their bookkeeping package
+    For our usage we document transactions and we can view and represent the data in any way to enhance personal or sme businesse
+    Per docs/DISCLAIMER.md: private/business only, mixed exceptional startup, respect and give info and user deals with auditor and SARS
+    """
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+
+    from .reports import generate_auditor_csv
+    csv_pack = generate_auditor_csv(tenant_id)
+    append_audit_log(tenant_id, user_id, "report.auditor_csv", "reports", csv_pack["file_key"], {"count": csv_pack["count"], "sha256": csv_pack["sha256"]})
+    return csv_pack
+
 @app.get("/v1/reports/{report_id}")
 def get_report(report_id: str, user_id: int = Depends(require_login)):
     db = get_db()

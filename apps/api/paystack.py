@@ -96,13 +96,13 @@ def initialize_transaction(email: str, plan_code: str, callback_url: str, user_i
     """
     Like clearmind app.py:253-281 /subscribe
     """
+    details = plan_details(plan_code)
+    # If free plan, no paystack needed - return early before has_paystack check per red test
+    if details["amount_minor"] == 0:
+        return {"status": True, "free": True, "plan_code": plan_code}
     if not has_paystack():
         raise ValueError("Paystack not configured - missing sk_test|sk_live")
     sk = get_paystack_sk()
-    details = plan_details(plan_code)
-    # If free plan, no paystack needed
-    if details["amount_minor"] == 0:
-        return {"status": True, "free": True, "plan_code": plan_code}
     plans = get_paystack_plans()
     paystack_plan_code = plans.get(plan_code, get_paystack_plan_individual())
     body = {

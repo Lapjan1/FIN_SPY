@@ -80,7 +80,7 @@ export default function SettingsPage() {
       <div className="border border-slate-800 rounded p-4">
         <h3 className="font-semibold">Current Settings (admin-only, redacted secrets)</h3>
         <pre className="bg-slate-900 p-2 rounded text-xs whitespace-pre-wrap">{JSON.stringify(settings,null,2)}</pre>
-        <p className="text-xs mt-2 text-slate-500">Clearmind had plaintext value={{{{ openai_api_key }}}} risky. FIN_SPY: redacted ***REDACTED*** + last4, input type password, never value from API for secret keys.</p>
+        <p className="text-xs mt-2 text-slate-500">Clearmind had plaintext value={'{{ openai_api_key }}'} risky. FIN_SPY: redacted ***REDACTED*** + last4, input type password, never value from API for secret keys.</p>
       </div>
 
       <pre className="bg-slate-900 p-4 rounded text-xs whitespace-pre-wrap">{msg}</pre>

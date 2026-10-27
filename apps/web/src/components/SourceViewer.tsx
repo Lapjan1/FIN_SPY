@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 
-// Signature demo moment: click any number -> grid -> PDF page with highlighted bbox
+// Signature demo moment: click any number → grid → PDF page with highlighted bbox
 // Per docs/UI_SPEC.md - pdf.js overlay with bbox yellow
 
 type Props = {

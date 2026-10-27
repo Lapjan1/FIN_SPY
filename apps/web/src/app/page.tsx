@@ -43,7 +43,7 @@ export default function HomePage() {
 
       <div className="border border-slate-800 rounded p-4">
         <h3 className="font-semibold">Architecture - DB-first per AGENTS.md</h3>
-        <pre className="text-xs text-slate-400 mt-2 whitespace-pre-wrap">Browser Next.js -> FastAPI /v1 -> Vault content-hash SHA256 -> Queue SQLite->Postgres -> Worker intake->hash->text+bbox->extract->reconcile -> LLM Meta Adapter freellmapi:3001 dev llama.com 1.3 prod -> SQLite fin_spy.db Supabase RLS audit_log hash-chain -> Spy Engine subscription/duplicate/fee/anomaly -> KPI Engine -> Dashboard API + Chat tool-calling -> Reports Excel+Signed PDF+Evidence Pack</pre>
+        <pre className="text-xs text-slate-400 mt-2 whitespace-pre-wrap">Browser Next.js → FastAPI /v1 → Vault content-hash SHA256 → Queue SQLite→Postgres → Worker intake→hash→text+bbox→extract→reconcile → LLM Meta Adapter freellmapi:3001 dev llama.com 1.3 prod → SQLite fin_spy.db Supabase RLS audit_log hash-chain → Spy Engine subscription/duplicate/fee/anomaly → KPI Engine → Dashboard API + Chat tool-calling → Reports Excel+Signed PDF+Evidence Pack</pre>
       </div>
     </main>
   );

@@ -20,7 +20,7 @@ export default function RefundPage() {
       </ul>
 
       <h2 className="text-xl font-semibold mt-8">Refunds</h2>
-      <p className="text-gray-700 leading-7">Because service is digital and immediately accessible (PDF upload -> hash vault -> extraction) we do not offer refunds for partial billing periods. If you cancel you continue to have access until end of paid period. Excel workbook live formulas signed PDF Evidence Pack ZIP already generated are digital.</p>
+      <p className="text-gray-700 leading-7">Because service is digital and immediately accessible (PDF upload → hash vault → extraction) we do not offer refunds for partial billing periods. If you cancel you continue to have access until end of paid period. Excel workbook live formulas signed PDF Evidence Pack ZIP already generated are digital.</p>
 
       <h2 className="text-xl font-semibold mt-8">Exceptions</h2>
       <p className="text-gray-700 leading-7">If you experience technical issue that prevents you from using service for more than 48 consecutive hours (e.g. reconciliation gate always failing vault hash mismatch extraction 0% accuracy dashboard drill-to-bbox broken) contact us for pro-rata refund or service credit. Verification via scripts/verify_pack.py independent hasher + audit_log hash-chain check per Appendix D.</p>

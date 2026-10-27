@@ -1,9 +1,10 @@
 name: Uptime Ping - Keep Railway Awake
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'  # Every 5 minutes per user request + AGENTS.md Known pitfalls Supabase free pauses + Railway sleep
   workflow_dispatch:
+  # schedule disabled while account suspended - use UptimeRobot free external ping to avoid Actions storage
+  # schedule:
+  #   - cron: '*/5 * * * *'  # Every 5 minutes per user request + AGENTS.md Known pitfalls Supabase free pauses + Railway sleep
 
 jobs:
   ping:

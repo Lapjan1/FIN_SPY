@@ -1,0 +1,26 @@
+name: Uptime Ping - Keep Railway Awake
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes per user request + AGENTS.md Known pitfalls Supabase free pauses + Railway sleep
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API health/ready
+        run: |
+          echo "Pinging https://finspy-production.up.railway.app/health/ready"
+          curl -fsS https://finspy-production.up.railway.app/health/ready || curl -fsS https://finspy-production.up.railway.app/health || echo "Ping failed - service may be sleeping, will retry next cron"
+          echo "Ping done at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Ping Web if exists
+        run: |
+          # Try web domain if deployed, ignore failure
+          curl -fsS https://finspy-web-production.up.railway.app/ 2>&1 | head -n 5 || echo "Web not yet deployed - ignore"
+          # Alternative Vercel URL if you deploy web to Vercel
+          # curl -fsS https://fin-spy.vercel.app/ 2>&1 | head -n 5 || true
+
+      - name: Log timestamp
+        run: echo "Uptime ping completed $(date -u)"

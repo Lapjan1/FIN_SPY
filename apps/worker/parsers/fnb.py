@@ -54,11 +54,31 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
     warnings = []
     opening = None
     closing = None
+    account_number = None
+    bank_name = "FNB"
+    branch_code = None
 
     line_id_map = {}
     for page in pages:
         for line in page.get('lines', []):
             line_id_map[line['line_id']] = line
+
+    # Try to detect account number from text via registry
+    try:
+        from .registry import get_bank_config
+        cfg = get_bank_config("FNB")
+        if cfg:
+            account_regex = cfg.get('account_regex', r'Account Number\s*[:#]?\s*(\d+)')
+            branch_regex = cfg.get('branch_code_regex', r'Branch Code\s*[:#]?\s*(\d+)')
+            all_text = " ".join([line['text'] for page in pages for line in page['lines']])
+            m = re.search(account_regex, all_text, re.I)
+            if m:
+                account_number = m.group(1) if m.groups() else m.group(0)
+            m = re.search(branch_regex, all_text, re.I)
+            if m:
+                branch_code = m.group(1) if m.groups() else m.group(0)
+    except:
+        pass
 
     # Simple heuristic: look for lines containing date + amount + balance + opening/closing detection per user totals =/- == balance
     for page in pages:
@@ -175,7 +195,18 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
             warnings.append(f"Reconciliation failed: opening {opening} + sum = {computed} != closing {closing}")
 
     return ExtractionResult(
-        statement={"bank":"FNB","account_mask":None,"period_start":None,"period_end":None,"currency":"ZAR","opening_balance":str(opening/100) if opening else None,"closing_balance":str(closing/100) if closing else None},
+        statement={
+            "bank":"FNB",
+            "account_mask": account_number[-4:] if account_number else None,
+            "account_number": account_number,
+            "bank_name": bank_name,
+            "branch_code": branch_code,
+            "period_start":None,
+            "period_end":None,
+            "currency":"ZAR",
+            "opening_balance":str(opening/100) if opening else None,
+            "closing_balance":str(closing/100) if closing else None
+        },
         rows=rows,
         unaccounted_lines=unaccounted,
         warnings=warnings,

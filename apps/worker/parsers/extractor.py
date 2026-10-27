@@ -333,32 +333,88 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
 def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, run_id: str):
     """
     Persist extraction result to DB per DB-first: extraction_runs + source_spans + transactions + transaction_sources
+    Per user question: all transactions only ever recorded per bank account number, each account number should have its own database? No, own ledger account within same DB per tenant, with unique constraint tenant_id + account_number
     """
     from apps.api.db import get_db
     import uuid
     db = get_db()
-    # extraction_runs already created elsewhere? For scaffold, assume run_id exists
-    # source_spans
-    for page_no in [1]:  # Simplified
+
+    # Handle account_number per bank account: create account if not exists with tenant_id + account_number unique
+    account_number = result.statement.get("account_number") if result.statement else None
+    bank_name = result.statement.get("bank") or result.statement.get("bank_name") if result.statement else None
+    branch_code = result.statement.get("branch_code") if result.statement else None
+    account_id = None
+    if account_number:
+        # Check if account exists for this tenant + account_number
+        cur = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND account_number=?", (tenant_id, account_number))
+        row = cur.fetchone()
+        if row:
+            account_id = row["id"] if isinstance(row, dict) else row[0]
+        else:
+            # Create account with code = account_number or generic
+            account_id = f"acc-{uuid.uuid4().hex[:8]}"
+            code = account_number[-6:] if len(account_number) > 6 else account_number
+            name = f"{bank_name or 'Bank'} - {account_number}" if bank_name else f"Bank Account {account_number}"
+            try:
+                db.execute(
+                    "INSERT INTO accounts (id, tenant_id, code, name, type, account_number, bank_name, branch_code) VALUES (?,?,?,?,?,?,?,?)",
+                    (account_id, tenant_id, code, name, "asset", account_number, bank_name, branch_code)
+                )
+            except Exception as e:
+                # If unique constraint fails, fetch existing
+                cur = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND account_number=?", (tenant_id, account_number))
+                row = cur.fetchone()
+                if row:
+                    account_id = row["id"] if isinstance(row, dict) else row[0]
+        # Update source_documents with account info
+        try:
+            db.execute(
+                "UPDATE source_documents SET account_id=?, account_number=?, bank_name=?, branch_code=? WHERE id=?",
+                (account_id, account_number, bank_name, branch_code, document_id)
+            )
+        except Exception:
+            pass
+
+    # If no account_number, use default account per tenant
+    if not account_id:
+        cur = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND code='1000' LIMIT 1", (tenant_id,))
+        row = cur.fetchone()
+        if row:
+            account_id = row["id"] if isinstance(row, dict) else row[0]
+        else:
+            # Create generic bank account
+            account_id = f"acc-{uuid.uuid4().hex[:8]}"
+            try:
+                db.execute(
+                    "INSERT INTO accounts (id, tenant_id, code, name, type, account_number, bank_name) VALUES (?,?,?,?,?,?,?)",
+                    (account_id, tenant_id, "1000", "Bank - Generic", "asset", account_number or "unknown", bank_name or "Unknown")
+                )
+            except:
+                pass
+
+    # source_spans + transactions with account_id and account_number per user question
+    for page_no in [1]:
         for row in result.rows:
             span_id = f"span-{uuid.uuid4().hex[:8]}"
-            # Find line
-            # For scaffold, use first line_id
             line_id = row.line_ids[0] if row.line_ids else "L001"
             db.execute(
                 "INSERT OR REPLACE INTO source_spans (id, tenant_id, run_id, document_id, page_no, line_id, bbox_x0, bbox_y0, bbox_x1, bbox_y1, text, text_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (span_id, tenant_id, run_id, document_id, 1, line_id, 0,0,100,10, row.source_quote, hashlib.sha256(row.source_quote.encode()).hexdigest()[:16])
             )
-            # transactions
             txn_id = f"txn-{uuid.uuid4().hex[:8]}"
-            # fingerprint per AGENTS.md SHA256(date|amount|desc_norm)
             from .base import fingerprint_txn
             fp = fingerprint_txn(row.date, row.amount_minor, row.description)
+            # Ensure transaction only once ever per bank account number per user question: UNIQUE(tenant_id, account_number, fingerprint_sha256)
+            # Check if fingerprint already exists for this tenant + account_number
+            cur = db.execute("SELECT id FROM transactions WHERE tenant_id=? AND account_number=? AND fingerprint_sha256=?", (tenant_id, account_number or "", fp))
+            existing = cur.fetchone()
+            if existing:
+                # Duplicate transaction - skip per each transaction only once ever
+                continue
             db.execute(
-                "INSERT OR REPLACE INTO transactions (id, tenant_id, document_id, run_id, txn_date, description_raw, amount_minor, currency, direction, balance_after_minor, fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (txn_id, tenant_id, document_id, run_id, row.date, row.description, row.amount_minor, "ZAR", row.direction, row.balance_after_minor, fp, "proposed")
+                "INSERT OR REPLACE INTO transactions (id, tenant_id, account_id, account_number, document_id, run_id, txn_date, description_raw, amount_minor, currency, direction, balance_after_minor, fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (txn_id, tenant_id, account_id, account_number or "", document_id, run_id, row.date, row.description, row.amount_minor, "ZAR", row.direction, row.balance_after_minor, fp, "proposed")
             )
-            # transaction_sources
             db.execute(
                 "INSERT OR REPLACE INTO transaction_sources (transaction_id, span_id, role) VALUES (?,?,?)",
                 (txn_id, span_id, "amount")

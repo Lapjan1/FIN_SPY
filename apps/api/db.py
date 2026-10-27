@@ -173,6 +173,10 @@ def init_db():
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
         entity_id TEXT,
+        account_id TEXT,
+        account_number TEXT,
+        bank_name TEXT,
+        branch_code TEXT,
         sha256 TEXT UNIQUE NOT NULL,
         size_bytes INTEGER NOT NULL,
         mime TEXT,
@@ -185,7 +189,8 @@ def init_db():
         status TEXT DEFAULT 'queued',
         legal_hold INTEGER DEFAULT 0,
         tsa_token_key TEXT,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
     );
 
     CREATE TABLE IF NOT EXISTS document_pages (
@@ -241,6 +246,8 @@ def init_db():
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
         entity_id TEXT,
+        account_id TEXT,
+        account_number TEXT,
         document_id TEXT,
         run_id TEXT,
         txn_date TEXT NOT NULL,
@@ -252,7 +259,10 @@ def init_db():
         fingerprint_sha256 TEXT NOT NULL,
         status TEXT DEFAULT 'proposed',
         created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id),
+        FOREIGN KEY (document_id) REFERENCES source_documents(id),
+        UNIQUE(tenant_id, account_number, fingerprint_sha256)
     );
 
     CREATE TABLE IF NOT EXISTS transaction_sources (
@@ -299,7 +309,12 @@ def init_db():
         code TEXT NOT NULL,
         name TEXT NOT NULL,
         type TEXT,
-        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        account_number TEXT,
+        bank_name TEXT,
+        branch_code TEXT,
+        is_active INTEGER DEFAULT 1,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        UNIQUE(tenant_id, account_number)
     );
 
     CREATE TABLE IF NOT EXISTS journal_entries (
@@ -556,8 +571,13 @@ def _ensure_indexes(db: DbHandle):
         "CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint ON transactions(fingerprint_sha256);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_document ON transactions(document_id);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_account_number ON transactions(account_number);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_tenant_account_fingerprint ON transactions(tenant_id, account_number, fingerprint_sha256);",
         "CREATE INDEX IF NOT EXISTS idx_source_documents_tenant_sha ON source_documents(tenant_id, sha256);",
         "CREATE INDEX IF NOT EXISTS idx_source_documents_uploaded_by ON source_documents(uploaded_by);",
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_account ON source_documents(account_id);",
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_account_number ON source_documents(account_number);",
         "CREATE INDEX IF NOT EXISTS idx_source_spans_tenant_doc ON source_spans(tenant_id, document_id);",
         "CREATE INDEX IF NOT EXISTS idx_source_spans_run ON source_spans(run_id);",
         "CREATE INDEX IF NOT EXISTS idx_classifications_tenant_txn ON classifications(tenant_id, transaction_id);",
@@ -572,6 +592,8 @@ def _ensure_indexes(db: DbHandle):
         "CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs(document_id);",
         "CREATE INDEX IF NOT EXISTS idx_transaction_sources_txn ON transaction_sources(transaction_id);",
         "CREATE INDEX IF NOT EXISTS idx_transaction_sources_span ON transaction_sources(span_id);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_tenant_account_number ON accounts(tenant_id, account_number) WHERE account_number IS NOT NULL;",
+        "CREATE INDEX IF NOT EXISTS idx_accounts_account_number ON accounts(account_number);",
     ]
     for sql in indexes:
         try:
@@ -671,6 +693,7 @@ def _ensure_indexes(db: DbHandle):
 
 def _ensure_schema(db: DbHandle):
     # Paystack cols added via ALTER like clearmind database.py:210
+    # Plus account_number per bank account per user question: each account number should have its own ledger (not own DB, but own account row + unique constraint per tenant)
     cols_to_add = [
         ("users", "paystack_customer_code", "TEXT DEFAULT ''"),
         ("users", "paystack_subscription_code", "TEXT DEFAULT ''"),
@@ -682,6 +705,16 @@ def _ensure_schema(db: DbHandle):
         ("partner_profiles", "features", "TEXT DEFAULT '[]'"),
         ("partner_profiles", "logo_url", "TEXT DEFAULT ''"),
         ("partner_profiles", "theme_color", "TEXT DEFAULT '#1a1a2e'"),
+        ("accounts", "account_number", "TEXT"),
+        ("accounts", "bank_name", "TEXT"),
+        ("accounts", "branch_code", "TEXT"),
+        ("accounts", "is_active", "INTEGER DEFAULT 1"),
+        ("source_documents", "account_id", "TEXT"),
+        ("source_documents", "account_number", "TEXT"),
+        ("source_documents", "bank_name", "TEXT"),
+        ("source_documents", "branch_code", "TEXT"),
+        ("transactions", "account_id", "TEXT"),
+        ("transactions", "account_number", "TEXT"),
     ]
     for table, col, typ in cols_to_add:
         try:

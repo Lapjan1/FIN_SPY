@@ -18,7 +18,7 @@ DATE_PATTERNS = [
     r'(?P<day>\d{1,2})[-/]\s*(?P<mon>\d{1,2})[-/]\s*(?P<year>\d{4})',
 ]
 
-AMOUNT_RE = r'[Rr]?\s*[\d\s,\.]+(?:\s*(?:Cr|Dr|DR|CR))?|\(\s*[\d\s,\.]+\s*\)|\d+\s*-\s*$'
+AMOUNT_RE = r'[Rr]?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr|DR|CR)?|\(\s*[\d\s,\.]+\s*\)|\d+\s*[-+]\s*$'
 
 def normalize_date(raw: str) -> Optional[str]:
     # Simplified: return YYYY-MM-DD if parseable, else None
@@ -60,14 +60,36 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
         for line in page.get('lines', []):
             line_id_map[line['line_id']] = line
 
-    # Simple heuristic: look for lines containing date + amount + balance
+    # Simple heuristic: look for lines containing date + amount + balance + opening/closing detection per user totals =/- == balance
     for page in pages:
         for line in page.get('lines', []):
             text = line['text']
+            # Detect opening/closing balance before header skip - per extraction test opening balance +/- amount == running balance/total
+            if re.search(r'Opening Balance', text, re.I):
+                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                if amounts:
+                    try:
+                        opening = parse_sa_amount(amounts[-1])
+                        unaccounted.append({"line_id": line['line_id'], "reason": "opening_balance"})
+                        continue
+                    except:
+                        pass
+            if re.search(r'Closing Balance', text, re.I):
+                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                if amounts:
+                    try:
+                        closing = parse_sa_amount(amounts[-1])
+                        unaccounted.append({"line_id": line['line_id'], "reason": "closing_balance"})
+                        continue
+                    except:
+                        pass
+
             # Skip header/footer noise
-            if re.search(r'Page \d+|Statement|Account Number|FNB|First National Bank', text, re.I):
-                unaccounted.append({"line_id": line['line_id'], "reason": "header"})
-                continue
+            if re.search(r'Page \d+|Account Number|FNB Statement|First National Bank.*Account|Branch Code|Period:|Date\s+Description\s+Amount\s+Balance', text, re.I):
+                # More specific header skip - avoid skipping opening/closing
+                if not re.search(r'Opening Balance|Closing Balance', text, re.I):
+                    unaccounted.append({"line_id": line['line_id'], "reason": "header"})
+                    continue
             # Try to find date
             date_match = None
             for pat in DATE_PATTERNS:
@@ -76,8 +98,8 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     break
             if not date_match:
                 # Check if amount + balance present - transaction candidate
-                # Look for two amounts in line
-                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                # Look for two amounts in line - handle trailing minus/plus R450,00- R15 000,00+ per user consolidation question
+                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
                 if len(amounts) >= 2:
                     # Potential transaction
                     pass
@@ -85,8 +107,8 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue
 
-            # Extract amounts
-            amounts = re.findall(r'R?\s*[\d\s,\.]+\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)|\d+\s*-\s*$', text)
+            # Extract amounts - include optional trailing -/+ for SA format R450,00- R15 000,00+ per totals =/- == balance from top to bottom and bottom to top
+            amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)|\d+\s*[-+]\s*$', text)
             if len(amounts) < 1:
                 unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue

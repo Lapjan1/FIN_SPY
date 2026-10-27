@@ -46,15 +46,29 @@ def parse_sa_amount(raw: str) -> int:
     from decimal import Decimal, InvalidOperation
     s = raw.strip()
     negative = False
+    is_credit = False
     if s.startswith('(') and s.endswith(')'):
         negative = True
         s = s[1:-1]
+    # Handle trailing + and - and Cr/Dr per SA formats R450,00- R15 000,00+ Cr/Dr
     if s.endswith('-') or s.endswith('Dr') or s.endswith('DR'):
         negative = True
         s = s.rstrip('-').rstrip('Dr').rstrip('DR').strip()
+        s = s.rstrip('-').strip()  # double strip for cases like R450,00-
+    if s.endswith('+'):
+        is_credit = True
+        s = s.rstrip('+').strip()
     if s.endswith('Cr') or s.endswith('CR'):
         s = s.rstrip('Cr').rstrip('CR').strip()
+        is_credit = True
     s = s.replace('R','').replace('r','').replace(' ','').strip()
+    # After stripping R and spaces, may still have trailing - or + from original like 450,00- -> 450,00- still? Handle again
+    if s.endswith('-'):
+        negative = True
+        s = s.rstrip('-').strip()
+    if s.endswith('+'):
+        is_credit = True
+        s = s.rstrip('+').strip()
     # Handle SA comma decimal: 1 234,56 -> 1234.56 ; if both comma and period, assume comma thousands? Simplified:
     if ',' in s and '.' in s:
         # Use last separator as decimal

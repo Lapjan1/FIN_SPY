@@ -108,13 +108,15 @@ docs/PLAN,MODULES,FLOWS,UI_SPEC,decisions,METHOD_STATEMENT
 - [ ] Video 2-3 min - hero flow in README, need recording after dashboard drill-to-bbox + signed pack verification green per docs/PLAN.md
 - [ ] Reports Excel live formulas + signed PAdES PDF pyHanko + FreeTSA + Evidence Pack ZIP + verify_pack.py independent verifier (scripts exist but not end-to-end tested) - apps/api/reports.py generate_powerbi_pack() Excel + CSVs + generate_excel_workbook() per Appendix G + generate_auditor_csv() per user decision export package auditor can use CSV to input in bookkeeping package, endpoints GET /v1/reports/powerbi 200 file_key counts fact_transactions 2 etc + GET /v1/reports/excel + GET /v1/reports/auditor-csv + POST /v1/reports?kind=powerbi immediate per homework Part 5.10, tested via scripts/gen_powerbi_demo.py counts fact_transactions 2 dim_account 1 etc
 
-## Current Progress v0.7.0 Day3 finish (see STATE.md, CHANGELOG.md, docs/AUTH_PAYSTACK.md, docs/SETTINGS.md, docs/RECAP_DAY3.md)
+## Current Progress v0.9.0 Day3 close (see STATE.md, CHANGELOG.md, docs/AUTH_PAYSTACK.md, docs/SETTINGS.md, docs/RECAP_DAY3.md)
 - DB: dual + hash-chain audit + isolation tests + indexes + star-schema views + journal balance constraint + per bank account number ledger no contamination per customer 20 private 100 business + PowerBI pack
 - Auth: bcrypt + FastAPI deps require_login/require_subscription + trial pages + reset token + fail-closed secret + email service Resend free tier no-reply
 - Paystack: timing-safe verify + checkout/callback/webhook idempotent + plan mapping + free check before has_paystack + live deployment Online ready true backend pg + domain ACTIVE for Paystack live URL proof /health/ready + /privacy POPIA real markdown + uptime ping
 - Extraction: deterministic FNB/STDB/ABSA parsers per bank registry deviations + line-ID grounding + spans bbox + fingerprint dedup + reconciliation gate both directions top->bottom bottom->top totals =/- == balance + review queue + side-by-side viewer + encrypted PDFs + intake classifier bank statement duplicate exclude tamper + golden tests 99% accuracy
-- Tests: 80 passed (6 smoke +6 db_auth_paystack +3 settings +9 red_auth +5 red_paystack +11 red_parsers +7 extraction +6 encrypted +2 e2e Day2 +8 intake +6 powerbi +3 reconcile both +5 golden +3 account isolation)
-- Next: Day4 books dynamic per-tenant COA no hardcoded + private/business/mixed classification + journal entries trial balance per TIMELINE.md, Day6 dashboard + Day7 reports + Day9 video + Day10 submit
+- Tests: 89 passed (80 previous +9: 6 coa_templates incl. vendor export/rule/auto-book/presentation grouping + 3 three-books choice/totals-per-period/422 invalid-params)
+- Books: 3 locked templates personal (default) / sme_cc / mixed_sole_prop + active_template choice one at a time + per merchant per account rules + vendor export + auto-book journal on code match (presentation layer, execution on approval)
+- KPIs: explicit inflow=credit/outflow=debit flags + totals per period first, then percentages; dashboard ?from_date=&to_date=&account_number= with 422 validation, real totals not mock
+- Next: Day4 journal posting from rules + trial balance endpoint, Day6 dashboard drill, Day9 video + Day10 submit
 
 ## License
 MIT

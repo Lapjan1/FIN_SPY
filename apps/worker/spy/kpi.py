@@ -7,14 +7,85 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 
-def compute_kpis(transactions: List[Dict], current_balance_minor: int = None) -> Dict:
+def direction_flags(direction: str) -> Dict[str, object]:
+    """Explicit inflow/outflow flag from direction. Credit = money in, debit = money out."""
+    d = (direction or "debit").lower()
+    is_inflow = d == "credit"
+    is_outflow = not is_inflow
+    return {"is_inflow": is_inflow, "is_outflow": is_outflow, "signed_multiplier": 1 if is_inflow else -1}
+
+def compute_period_totals(transactions: List[Dict], from_date: str = None, to_date: str = None, account_number: str = None) -> Dict:
+    """Totals per period of inspection BEFORE percentages.
+    Filters by txn_date range and optional account_number, then sums inflow/outflow.
+    Returns totals + per-month breakdown. All money in minor units (cents).
     """
-    Compute KPIs from transactions list
+    filtered = []
+    for tx in transactions:
+        d = tx.get('txn_date', '') or tx.get('date', '')
+        if from_date and d < from_date:
+            continue
+        if to_date and d > to_date:
+            continue
+        if account_number and tx.get('account_number') != account_number:
+            continue
+        filtered.append(tx)
+
+    inflow_minor = 0
+    outflow_minor = 0
+    inflow_count = 0
+    outflow_count = 0
+    monthly_outflow = defaultdict(int)
+    monthly_inflow = defaultdict(int)
+    vendor_counts = Counter()
+    for tx in filtered:
+        amount = int(tx.get('amount_minor', 0))
+        flags = direction_flags(tx.get('direction', 'debit'))
+        desc = tx.get('description_raw', '') or tx.get('description', '')
+        date_str = tx.get('txn_date', '') or tx.get('date', '')
+        if flags["is_inflow"]:
+            inflow_minor += amount
+            inflow_count += 1
+            if date_str:
+                monthly_inflow[date_str[:7]] += amount
+        else:
+            outflow_minor += amount
+            outflow_count += 1
+            vendor = desc.split()[0] if desc else "Unknown"
+            vendor_counts[vendor] += amount
+            if date_str:
+                monthly_outflow[date_str[:7]] += amount
+
+    return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "account_number": account_number,
+        "txn_count": len(filtered),
+        "inflow_count": inflow_count,
+        "outflow_count": outflow_count,
+        "inflow_minor": inflow_minor,
+        "outflow_minor": outflow_minor,
+        "net_flow_minor": inflow_minor - outflow_minor,
+        "monthly_inflow": dict(monthly_inflow),
+        "monthly_outflow": dict(monthly_outflow),
+        "vendor_counts": dict(vendor_counts),
+    }
+
+def compute_kpis(transactions: List[Dict], current_balance_minor: int = None, from_date: str = None, to_date: str = None, account_number: str = None) -> Dict:
+    """
+    Compute KPIs from transactions list. Step 1: totals per period (compute_period_totals).
+    Step 2: percentages derived from totals (savings_rate, private_vs_business, etc).
     Each transaction has amount_minor, direction debit|credit, txn_date
     Inflow = credit (money in), Outflow = debit (money out) per SA bank: debit is outflow, credit is inflow
     """
-    if not transactions:
+    totals = compute_period_totals(transactions, from_date, to_date, account_number)
+    inflow = totals["inflow_minor"]
+    outflow = totals["outflow_minor"]
+    if totals["txn_count"] == 0:
         return {
+            "from_date": from_date,
+            "to_date": to_date,
+            "account_number": account_number,
+            "totals": totals,
             "runway_months": 0,
             "burn_rate_minor": 0,
             "savings_rate_pct": 0,
@@ -25,39 +96,16 @@ def compute_kpis(transactions: List[Dict], current_balance_minor: int = None) ->
             "net_flow_minor": 0,
             "top_vendors": [],
             "subscription_creep_minor": 0,
+            "is_inflow_understood": True,
+            "is_outflow_understood": True,
         }
 
-    inflow = 0
-    outflow = 0
-    vendor_counts = Counter()
-    monthly_outflow = defaultdict(int)
-    monthly_inflow = defaultdict(int)
-
-    for tx in transactions:
-        amount = tx.get('amount_minor', 0)
-        direction = tx.get('direction', 'debit')
-        desc = tx.get('description_raw', '') or tx.get('description', '')
-        date_str = tx.get('txn_date', '') or tx.get('date', '')
-
-        # Money in and outflow per user question: AI understands via direction
-        if direction == "credit":
-            inflow += amount
-            if date_str:
-                try:
-                    month = date_str[:7]  # YYYY-MM
-                    monthly_inflow[month] += amount
-                except:
-                    pass
-        else:  # debit = outflow
-            outflow += amount
-            vendor = desc.split()[0] if desc else "Unknown"
-            vendor_counts[vendor] += amount
-            if date_str:
-                try:
-                    month = date_str[:7]
-                    monthly_outflow[month] += amount
-                except:
-                    pass
+    # Totals already computed per period first (see totals above) - derive percentages from totals
+    inflow = totals["inflow_minor"]
+    outflow = totals["outflow_minor"]
+    monthly_inflow = defaultdict(int, totals.get("monthly_inflow", {}))
+    monthly_outflow = defaultdict(int, totals.get("monthly_outflow", {}))
+    vendor_counts = Counter(totals.get("vendor_counts", {}))
 
     net_flow = inflow - outflow
     # Burn rate = avg monthly outflow last 3 months
@@ -92,6 +140,10 @@ def compute_kpis(transactions: List[Dict], current_balance_minor: int = None) ->
         pass
 
     return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "account_number": account_number,
+        "totals": totals,
         "runway_months": round(runway_months, 1),
         "burn_rate_minor": int(avg_burn),
         "savings_rate_pct": round(savings_rate, 1),

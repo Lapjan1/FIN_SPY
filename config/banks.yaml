@@ -140,7 +140,7 @@ entities:
     name: "Business"
     type: "business"
 
-# COA seed generic SA per LEARNINGS 2026-10-26-02 dynamic per tenant not hardcoded
+# COA seed generic SA per LEARNINGS 2026-10-26-02 dynamic per tenant not hardcoded - kept for backward compatibility, now use coa_templates
 coa_seed:
   - code: "1000"
     name: "Bank - FNB"
@@ -184,3 +184,118 @@ coa_seed:
   - code: "8000"
     name: "Loan from Owner"
     type: "liability"
+
+# 3 Standard COA Templates per SA standard accounting practices - per user decision: default personal and options mixed or business per merchant per account, for competition not lifetime project
+# Pastel/Sage/Xero SA common numbering: 1000-1999 Assets, 2000-2999 Liabilities, 3000-3999 Equity, 4000-4999 Income, 5000-5999 COGS, 6000-8999 Expenses, 9000-9999 Other
+coa_templates:
+  personal:
+    description: "Private Personal Finance - 30 accounts budgeting focus, no drawings, for personal entity per docs/MODULES.md"
+    accounts:
+      - {code: "1000", name: "Cheque Account - Personal Main", type: "asset"}
+      - {code: "1010", name: "Savings - Emergency", type: "asset"}
+      - {code: "1020", name: "Investments - TFSA / Unit Trusts", type: "asset"}
+      - {code: "1030", name: "Property - Primary Residence Cost", type: "asset"}
+      - {code: "1040", name: "Vehicle - Personal", type: "asset"}
+      - {code: "2000", name: "Credit Card", type: "liability"}
+      - {code: "2010", name: "Personal Loan", type: "liability"}
+      - {code: "2020", name: "Home Loan / Bond", type: "liability"}
+      - {code: "2030", name: "Vehicle Finance", type: "liability"}
+      - {code: "2040", name: "Store Accounts - Woolworths", type: "liability"}
+      - {code: "3000", name: "Net Worth / Opening Balance", type: "equity"}
+      - {code: "4000", name: "Salary - Main", type: "income"}
+      - {code: "4010", name: "Freelance / Side hustle", type: "income"}
+      - {code: "4100", name: "Interest / Dividends", type: "income"}
+      - {code: "4200", name: "Rental Income", type: "income"}
+      - {code: "6000", name: "Housing - Bond/Rent", type: "expense"}
+      - {code: "6010", name: "Utilities - Electricity/Water", type: "expense"}
+      - {code: "6020", name: "Groceries - Woolworths/Pick n Pay", type: "expense"}
+      - {code: "6030", name: "Transport - Fuel", type: "expense"}
+      - {code: "6035", name: "Transport - Public / Uber", type: "expense"}
+      - {code: "6040", name: "Insurance - Car/Home/Medical", type: "expense"}
+      - {code: "6050", name: "Healthcare - Medical Aid Gap", type: "expense"}
+      - {code: "6060", name: "Education / School Fees", type: "expense"}
+      - {code: "6070", name: "Entertainment / Dining / Netflix", type: "expense"}
+      - {code: "6080", name: "Clothing - Personal", type: "expense"}
+      - {code: "6090", name: "Bank Charges - Personal", type: "expense"}
+
+  sme_cc:
+    description: "SME/CC Pty Ltd / Close Corporation - Full Compliance 70 accounts per SA Pastel default, juristic person per Companies Act s19, no private in books except via drawings, per docs/DISCLAIMER.md"
+    accounts:
+      - {code: "1000", name: "Bank - Main (FN/STM/ABSA)", type: "asset"}
+      - {code: "1005", name: "Petty Cash", type: "asset"}
+      - {code: "1010", name: "Savings / Call Account", type: "asset"}
+      - {code: "1100", name: "Accounts Receivable / Trade Debtors", type: "asset"}
+      - {code: "1200", name: "Inventory", type: "asset"}
+      - {code: "1510", name: "Vehicles Cost", type: "asset"}
+      - {code: "1515", name: "Accum Depreciation - Vehicles", type: "asset"}
+      - {code: "1520", name: "Equipment Cost", type: "asset"}
+      - {code: "1525", name: "Accum Dep - Equipment", type: "asset"}
+      - {code: "1600", name: "VAT Input / VAT Control (debit)", type: "asset"}
+      - {code: "1700", name: "Deposit / Prepaid", type: "asset"}
+      - {code: "2000", name: "Accounts Payable / Trade Creditors", type: "liability"}
+      - {code: "2005", name: "Credit Card - Business", type: "liability"}
+      - {code: "2100", name: "Loans - Long Term", type: "liability"}
+      - {code: "2200", name: "VAT Output / VAT Control", type: "liability"}
+      - {code: "2210", name: "PAYE Payable", type: "liability"}
+      - {code: "2215", name: "UIF Payable", type: "liability"}
+      - {code: "2220", name: "SDL Payable", type: "liability"}
+      - {code: "2300", name: "SARS - Income Tax", type: "liability"}
+      - {code: "3000", name: "Share Capital / Members Interest CC", type: "equity"}
+      - {code: "3005", name: "Retained Earnings / Accumulated Profits", type: "equity"}
+      - {code: "3200", name: "Director Loan Account - Loan to Director", type: "equity"}
+      - {code: "3210", name: "Drawings / Member Drawings", type: "equity"}
+      - {code: "4000", name: "Sales - Main", type: "income"}
+      - {code: "4010", name: "Sales - Other", type: "income"}
+      - {code: "4100", name: "Fee Income", type: "income"}
+      - {code: "4900", name: "Interest Received", type: "income"}
+      - {code: "5000", name: "Cost of Sales - Materials", type: "expense"}
+      - {code: "5010", name: "Freight / COGS", type: "expense"}
+      - {code: "6000", name: "Marketing / Advertising", type: "expense"}
+      - {code: "6010", name: "Accounting / Audit Fees", type: "expense"}
+      - {code: "6100", name: "Rent", type: "expense"}
+      - {code: "6120", name: "Utilities / Telkom / Internet", type: "expense"}
+      - {code: "6200", name: "Fuel / Travel", type: "expense"}
+      - {code: "6220", name: "Repairs & Maintenance", type: "expense"}
+      - {code: "6300", name: "Professional Fees", type: "expense"}
+      - {code: "6400", name: "Salaries & Wages", type: "expense"}
+      - {code: "6410", name: "Staff Training", type: "expense"}
+      - {code: "6500", name: "Insurance", type: "expense"}
+      - {code: "6600", name: "Bank Charges", type: "expense"}
+      - {code: "6610", name: "Interest Paid", type: "expense"}
+      - {code: "6700", name: "Office Supplies", type: "expense"}
+
+  mixed_sole_prop:
+    description: "Mixed Personal & Business Sole Proprietor / Person Trading As - Standard Format If Selected per SA Income Tax Act no separate juristic person but must apportion, per docs/DISCLAIMER.md - 50 accounts combined personal asset pool + business asset pool + clear equity distribution + private usage tracking"
+    accounts:
+      - {code: "1000", name: "Bank - Business Trading Account", type: "asset"}
+      - {code: "1001", name: "Bank - Personal Cheque", type: "asset"}
+      - {code: "1005", name: "Petty Cash", type: "asset"}
+      - {code: "1010", name: "Personal Savings", type: "asset"}
+      - {code: "1020", name: "Personal Investments", type: "asset"}
+      - {code: "1100", name: "Debtors - Business", type: "asset"}
+      - {code: "1500", name: "Business Equipment", type: "asset"}
+      - {code: "1030", name: "Property - Primary Residence Cost", type: "asset"}
+      - {code: "2000", name: "Creditors - Business", type: "liability"}
+      - {code: "2005", name: "Credit Card Business", type: "liability"}
+      - {code: "2020", name: "Bond / Home Loan (personal)", type: "liability"}
+      - {code: "3000", name: "Owner's Equity / Capital Introduced", type: "equity"}
+      - {code: "3100", name: "Retained Earnings Business", type: "equity"}
+      - {code: "3200", name: "Drawings - Personal Living", type: "equity"}
+      - {code: "3210", name: "Drawings - Director Loan (if incorporate)", type: "equity"}
+      - {code: "3300", name: "Private Usage Suspense - Mixed Pending Review", type: "equity"}
+      - {code: "4000", name: "Business Sales", type: "income"}
+      - {code: "4100", name: "Personal - Salary / Other personal inflow", type: "income"}
+      - {code: "4100a", name: "Interest / Dividends Personal", type: "income"}
+      - {code: "6000", name: "Office - Rent", type: "expense"}
+      - {code: "6120", name: "Telecom - Telkom / MTN combined - Mixed allowed", type: "expense"}
+      - {code: "6200", name: "Vehicle - Fuel mixed", type: "expense"}
+      - {code: "6300", name: "Professional Fees", type: "expense"}
+      - {code: "6020", name: "Groceries - 100% private -> Drawings if paid from business bank", type: "expense"}
+      - {code: "6070", name: "Entertainment personal", type: "expense"}
+      - {code: "6000a", name: "Housing - Bond/Rent Personal", type: "expense"}
+      - {code: "6010a", name: "Utilities - Electricity/Water Personal", type: "expense"}
+      - {code: "6040", name: "Insurance - Car/Home/Medical", type: "expense"}
+      - {code: "6060", name: "Education / School Fees Personal", type: "expense"}
+      - {code: "6600", name: "Bank Charges", type: "expense"}
+      - {code: "1600", name: "VAT Input / VAT Control (debit)", type: "asset"}
+      - {code: "2200", name: "VAT Output / VAT Control", type: "liability"}

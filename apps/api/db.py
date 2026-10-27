@@ -130,6 +130,7 @@ def init_db():
         name TEXT NOT NULL,
         plan_code TEXT DEFAULT 'free',
         status TEXT DEFAULT 'active',
+        active_template TEXT DEFAULT 'personal',
         created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -313,6 +314,7 @@ def init_db():
         bank_name TEXT,
         branch_code TEXT,
         is_active INTEGER DEFAULT 1,
+        template TEXT DEFAULT 'personal',
         FOREIGN KEY (tenant_id) REFERENCES tenants(id),
         UNIQUE(tenant_id, account_number)
     );
@@ -448,6 +450,44 @@ def init_db():
         created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Merchant memory / vendor rules per merchant per account per user question: export vendor and add all transactions to certain account if like, sort and add rule, if certain code applies journal auto books other side
+    -- For competition not lifetime project, per merchant per account rules for presentation layer vendor grouping and % allocation
+    CREATE TABLE IF NOT EXISTS merchant_memory (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        normalized_merchant TEXT NOT NULL,
+        account_number TEXT,
+        account_id TEXT,
+        category_id TEXT,
+        nature TEXT,
+        business_pct INTEGER DEFAULT 100,
+        rationale TEXT,
+        source TEXT DEFAULT 'rule',
+        confidence REAL DEFAULT 1.0,
+        decided_by INTEGER,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id),
+        UNIQUE(tenant_id, normalized_merchant, account_number)
+    );
+
+    CREATE TABLE IF NOT EXISTS vendor_rules (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        normalized_merchant TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        target_account_id TEXT NOT NULL,
+        target_category_id TEXT,
+        nature TEXT,
+        business_pct INTEGER DEFAULT 100,
+        auto_book INTEGER DEFAULT 0,
+        created_by INTEGER,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (target_account_id) REFERENCES accounts(id),
+        UNIQUE(tenant_id, normalized_merchant, account_number)
+    );
+
     -- Indexes for performance per homework Done Means: 1000 tx analyze <5s without LLM, <15s with LLM, PowerBI export
     CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, txn_date);
     CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint ON transactions(fingerprint_sha256);
@@ -473,7 +513,7 @@ def init_db():
     -- Star-schema views for PowerBI export per homework Part 5.10: fact_transactions, fact_journal, dim_account, dim_category, dim_entity, dim_document, dim_date
     -- dim_date as view (not table) to avoid conflict - generates calendar from transactions + journal_entries
     CREATE VIEW IF NOT EXISTS fact_transactions AS
-        SELECT t.id, t.tenant_id, t.entity_id, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
+        SELECT t.id, t.tenant_id, t.entity_id, t.account_id, t.account_number, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
         FROM transactions t LEFT JOIN classifications c ON t.id = c.transaction_id;
 
     CREATE VIEW IF NOT EXISTS fact_journal AS
@@ -594,6 +634,9 @@ def _ensure_indexes(db: DbHandle):
         "CREATE INDEX IF NOT EXISTS idx_transaction_sources_span ON transaction_sources(span_id);",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_tenant_account_number ON accounts(tenant_id, account_number) WHERE account_number IS NOT NULL;",
         "CREATE INDEX IF NOT EXISTS idx_accounts_account_number ON accounts(account_number);",
+        "CREATE INDEX IF NOT EXISTS idx_merchant_memory_tenant_merchant ON merchant_memory(tenant_id, normalized_merchant);",
+        "CREATE INDEX IF NOT EXISTS idx_merchant_memory_account ON merchant_memory(account_number);",
+        "CREATE INDEX IF NOT EXISTS idx_vendor_rules_tenant_merchant_account ON vendor_rules(tenant_id, normalized_merchant, account_number);",
     ]
     for sql in indexes:
         try:
@@ -601,11 +644,37 @@ def _ensure_indexes(db: DbHandle):
         except Exception:
             pass
 
-    # Views for PowerBI star-schema per homework Part 5.10 - idempotent CREATE VIEW IF NOT EXISTS already in init_db, but ensure for existing DBs
-    # dim_date view generates calendar from transactions + journal_entries for PowerBI
+    # Views for PowerBI star-schema per homework Part 5.10 - need to drop and recreate to include account_number per user per merchant per account enhancement
+    # Drop existing views if old definition without account_number
+    drop_views = [
+        "DROP VIEW IF EXISTS fact_transactions;",
+        "DROP VIEW IF EXISTS fact_journal;",
+        "DROP VIEW IF EXISTS dim_account;",
+        "DROP VIEW IF EXISTS dim_category;",
+        "DROP VIEW IF NOT EXISTS dim_entity;",
+        "DROP VIEW IF EXISTS dim_document;",
+        "DROP VIEW IF EXISTS dim_date;",
+    ]
+    # SQLite doesn't support DROP VIEW IF NOT EXISTS for dim_entity typo above, handle separately
+    for drop_sql in drop_views:
+        try:
+            # Handle typo for dim_entity
+            if "NOT EXISTS" in drop_sql and "dim_entity" in drop_sql:
+                db.execute("DROP VIEW IF EXISTS dim_entity;")
+            else:
+                db.execute(drop_sql.replace("IF NOT EXISTS","IF EXISTS").replace("IF NOT EXISTS","").strip() if "DROP" in drop_sql else drop_sql)
+        except Exception:
+            pass
+    # Actually drop all views unconditionally to ensure new definition with account_number
+    for view_name in ["fact_transactions","fact_journal","dim_account","dim_category","dim_entity","dim_document","dim_date"]:
+        try:
+            db.execute(f"DROP VIEW IF EXISTS {view_name};")
+        except:
+            pass
+
     views = [
-        """CREATE VIEW IF NOT EXISTS fact_transactions AS
-            SELECT t.id, t.tenant_id, t.entity_id, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
+        """CREATE VIEW fact_transactions AS
+            SELECT t.id, t.tenant_id, t.entity_id, t.account_id, t.account_number, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
             FROM transactions t LEFT JOIN classifications c ON t.id = c.transaction_id;""",
         """CREATE VIEW IF NOT EXISTS fact_journal AS
             SELECT je.id as entry_id, je.tenant_id, je.entity_id, je.entry_date as date, je.memo, je.transaction_id, je.classification_id, jl.id as line_id, jl.account_id, jl.debit_minor, jl.credit_minor, a.code as account_code, a.name as account_name, a.type as account_type
@@ -691,6 +760,86 @@ def _ensure_indexes(db: DbHandle):
         except Exception:
             pass
 
+def cleanup_tenant(tenant_id: str):
+    """Delete tenant data in FK-safe order: children first, parents last.
+    Order: transaction_sources, classifications, transaction_revisions, flag_links, flags,
+    journal_lines, journal_entries, transactions, merchant_memory, vendor_rules,
+    source_spans, extraction_runs, document_pages, source_documents, accounts, audit_log,
+    usage_events, subscriptions, users, reset_tokens via users, tenants last.
+    Used by tests to avoid FOREIGN KEY constraint failed.
+    """
+    db = get_db()
+    # Children of transactions
+    try:
+        db.execute("DELETE FROM transaction_sources WHERE transaction_id IN (SELECT id FROM transactions WHERE tenant_id=?)", (tenant_id,))
+    except Exception:
+        pass
+    for tbl in ["classifications", "transaction_revisions"]:
+        try:
+            db.execute(f"DELETE FROM {tbl} WHERE tenant_id=?", (tenant_id,))
+        except Exception:
+            pass
+    try:
+        db.execute("DELETE FROM flag_links WHERE transaction_id IN (SELECT id FROM transactions WHERE tenant_id=?)", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM flags WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+    # Journals: lines reference entries and accounts, entries reference tenant
+    try:
+        db.execute("DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=?)", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM journal_entries WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+    for tbl in ["transactions", "merchant_memory", "vendor_rules", "source_spans"]:
+        try:
+            db.execute(f"DELETE FROM {tbl} WHERE tenant_id=?", (tenant_id,))
+        except Exception:
+            pass
+    try:
+        db.execute("DELETE FROM extraction_runs WHERE document_id IN (SELECT id FROM source_documents WHERE tenant_id=?)", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM document_pages WHERE document_id IN (SELECT id FROM source_documents WHERE tenant_id=?)", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM source_documents WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM accounts WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+    for tbl in ["audit_log", "usage_events", "subscriptions"]:
+        try:
+            db.execute(f"DELETE FROM {tbl} WHERE tenant_id=?", (tenant_id,))
+        except Exception:
+            pass
+    # Users + reset_tokens
+    try:
+        cur = db.execute("SELECT id FROM users WHERE tenant_id=?", (tenant_id,))
+        uids = [r["id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+        for uid in uids:
+            try:
+                db.execute("DELETE FROM reset_tokens WHERE user_id=?", (uid,))
+            except Exception:
+                pass
+        db.execute("DELETE FROM users WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM tenants WHERE id=?", (tenant_id,))
+    except Exception:
+        pass
+    db.commit()
+
 def _ensure_schema(db: DbHandle):
     # Paystack cols added via ALTER like clearmind database.py:210
     # Plus account_number per bank account per user question: each account number should have its own ledger (not own DB, but own account row + unique constraint per tenant)
@@ -709,6 +858,8 @@ def _ensure_schema(db: DbHandle):
         ("accounts", "bank_name", "TEXT"),
         ("accounts", "branch_code", "TEXT"),
         ("accounts", "is_active", "INTEGER DEFAULT 1"),
+        ("accounts", "template", "TEXT DEFAULT 'personal'"),
+        ("tenants", "active_template", "TEXT DEFAULT 'personal'"),
         ("source_documents", "account_id", "TEXT"),
         ("source_documents", "account_number", "TEXT"),
         ("source_documents", "bank_name", "TEXT"),

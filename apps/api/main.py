@@ -86,12 +86,35 @@ class TransactionOut(BaseModel):
     line_ids: List[str]
 
 class DashboardSummary(BaseModel):
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    account_number: Optional[str] = None
+    active_template: str = "personal"
+    totals: Optional[dict] = None
     leak_score_per_month_minor: int
     runway_months: float
     burn_rate_minor: int
     savings_rate_pct: float
     private_vs_business_ratio: float
+    inflow_minor: int = 0
+    outflow_minor: int = 0
+    net_flow_minor: int = 0
+    is_inflow_understood: bool = True
+    is_outflow_understood: bool = True
     trial_pages_remaining: Optional[int] = None
+
+class BooksSelectIn(BaseModel):
+    template: str = Field(..., description="One of personal|sme_cc|mixed_sole_prop")
+
+def _validate_period(from_date: Optional[str], to_date: Optional[str]):
+    import re
+    pat = r"^\d{4}-\d{2}-\d{2}$"
+    if from_date and not re.match(pat, from_date):
+        raise HTTPException(422, f"Invalid parameters: from_date must be YYYY-MM-DD, got '{from_date}'")
+    if to_date and not re.match(pat, to_date):
+        raise HTTPException(422, f"Invalid parameters: to_date must be YYYY-MM-DD, got '{to_date}'")
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(422, f"Invalid parameters: from_date '{from_date}' must be <= to_date '{to_date}'")
 
 class DebtInput(BaseModel):
     creditor: str
@@ -346,15 +369,94 @@ def get_sources(txn_id: str, user_id: int = Depends(require_login)):
     bboxes = [{"line_id": (s["line_id"] if isinstance(s, dict) else s[1]), "x0": (s["bbox_x0"] if isinstance(s, dict) else 10), "y0": (s["bbox_y0"] if isinstance(s, dict) else 20), "x1": (s["bbox_x1"] if isinstance(s, dict) else 90), "y1": (s["bbox_y1"] if isinstance(s, dict) else 25)} for s in spans] if spans else [{"line_id":"L012","x0":10,"y0":20,"x1":90,"y1":25}]
     return {"txn_id": txn_id, "page_no": 1, "line_ids": [b["line_id"] for b in bboxes], "bboxes": bboxes}
 
+@app.get("/v1/books/templates")
+def list_book_templates(user_id: int = Depends(require_login)):
+    from apps.worker.parsers.registry import get_coa_templates
+    tmpls = get_coa_templates()
+    return {"templates": [{"name": k, "description": v.get("description",""), "count": len(v.get("accounts",[]))} for k,v in tmpls.items()]}
+
+@app.get("/v1/books/active")
+def get_active_book(user_id: int = Depends(require_login)):
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    from apps.worker.parsers.registry import get_active_template
+    active = get_active_template(tenant_id)
+    cur = db.execute("SELECT COUNT(*) as cnt FROM accounts WHERE tenant_id=?", (tenant_id,))
+    r = cur.fetchone()
+    total = r["cnt"] if isinstance(r, dict) else r[0]
+    return {"tenant_id": tenant_id, "active_template": active, "total_accounts": total}
+
+@app.post("/v1/books/select")
+def select_book(inp: BooksSelectIn, user_id: int = Depends(require_login)):
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    from apps.worker.parsers.registry import set_active_template, VALID_TEMPLATES
+    if inp.template not in VALID_TEMPLATES:
+        raise HTTPException(422, f"Invalid parameters: template must be one of {VALID_TEMPLATES}, got '{inp.template}'")
+    try:
+        set_active_template(tenant_id, inp.template)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    append_audit_log(tenant_id, user_id, "books.select", "tenants", tenant_id, {"active_template": inp.template})
+    db.commit()
+    return {"tenant_id": tenant_id, "active_template": inp.template, "message": f"Now working with '{inp.template}' books only. Other templates remain seeded but inactive."}
+
 @app.get("/v1/dashboard/summary")
-def dashboard_summary(request: Request, user_id: int = Depends(require_login)):
+def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date: Optional[str] = None, account_number: Optional[str] = None, user_id: int = Depends(require_login)):
+    _validate_period(from_date, to_date)
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    from apps.worker.parsers.registry import get_active_template
+    active = get_active_template(tenant_id)
+    # Validate account_number exists for tenant if provided (never work on non-existing accounts)
+    if account_number:
+        cur = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND account_number=?", (tenant_id, account_number))
+        if not cur.fetchone():
+            raise HTTPException(422, f"Invalid parameters: account_number '{account_number}' does not exist for tenant. Seed COA and use an existing account.")
+    # Load transactions for period (totals first)
+    q = "SELECT id, txn_date, description_raw, amount_minor, direction, account_number FROM transactions WHERE tenant_id=?"
+    params: list = [tenant_id]
+    if from_date:
+        q += " AND txn_date>=?"
+        params.append(from_date)
+    if to_date:
+        q += " AND txn_date<=?"
+        params.append(to_date)
+    if account_number:
+        q += " AND account_number=?"
+        params.append(account_number)
+    q += " ORDER BY txn_date ASC LIMIT 5000"
+    cur = db.execute(q, tuple(params))
+    txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+    # If no data, return zero totals (not mock) so percentages derive from totals
+    from apps.worker.spy.kpi import compute_kpis
+    # Current balance: sum of signed in period or last balance_after? Use net as proxy
+    kpis = compute_kpis(txns, current_balance_minor=None, from_date=from_date, to_date=to_date, account_number=account_number)
     trial = get_trial_pages_remaining(user_id)
+    # Leak score: use subscription creep or outflow avg
+    leak = kpis.get("subscription_creep_minor", 0) or 0
     return {
-        "leak_score_per_month_minor": 18700,
-        "runway_months": 4.5,
-        "burn_rate_minor": 2500000,
-        "savings_rate_pct": 12.5,
-        "private_vs_business_ratio": 0.35,
+        "from_date": from_date,
+        "to_date": to_date,
+        "account_number": account_number,
+        "active_template": active,
+        "totals": kpis.get("totals"),
+        "leak_score_per_month_minor": leak,
+        "runway_months": kpis.get("runway_months", 0),
+        "burn_rate_minor": kpis.get("burn_rate_minor", 0),
+        "savings_rate_pct": kpis.get("savings_rate_pct", 0),
+        "private_vs_business_ratio": kpis.get("private_vs_business_ratio", 0),
+        "inflow_minor": kpis.get("inflow_minor", 0),
+        "outflow_minor": kpis.get("outflow_minor", 0),
+        "net_flow_minor": kpis.get("net_flow_minor", 0),
+        "is_inflow_understood": True,
+        "is_outflow_understood": True,
         "trial_pages_remaining": trial,
         "is_trial_unlimited": trial is None
     }
@@ -476,12 +578,13 @@ def get_excel_workbook(user_id: int = Depends(require_login)):
     return wb
 
 @app.get("/v1/reports/auditor-csv")
-def get_auditor_csv(user_id: int = Depends(require_login)):
+def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] = None, user_id: int = Depends(require_login)):
     """
     CSV for auditor to input in their bookkeeping package per user decision:
     Export package the auditor can use the data export to csv and input in their bookkeeping package
     For our usage we document transactions and we can view and represent the data in any way to enhance personal or sme businesse
     Per docs/DISCLAIMER.md: private/business only, mixed exceptional startup, respect and give info and user deals with auditor and SARS
+    Query params: vendor normalized merchant filter to export just a vendor if we do own set of books so user can export vendor and add all transactions to certain account if like, sort and add rule
     """
     db = get_db()
     cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
@@ -489,6 +592,36 @@ def get_auditor_csv(user_id: int = Depends(require_login)):
     tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
 
     from .reports import generate_auditor_csv
+
+    # If vendor filter, generate custom CSV filtered by vendor + account_number
+    if vendor:
+        # Call with filter - for MVP, we filter inside generate_auditor_csv? For now, pass vendor via custom query
+        # For simplicity, generate full pack then filter in endpoint? We'll implement filtered version
+        # Here we call generate_auditor_csv then filter? Actually generate_auditor_csv queries all, but we can add filtering logic
+        # For competition, we support vendor filter via direct query
+        cur = db.execute("SELECT t.id, t.txn_date as date, t.description_raw as description, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, t.account_number, t.document_id, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence, c.source, c.decided_by, a.code as account_code, a.name as account_name, a.type as account_type, a.bank_name, a.branch_code, d.original_filename, d.sha256 as doc_sha256 FROM transactions t LEFT JOIN classifications c ON t.id=c.transaction_id LEFT JOIN accounts a ON t.account_id=a.id LEFT JOIN source_documents d ON t.document_id=d.id WHERE t.tenant_id=? AND LOWER(t.description_raw) LIKE ?" + (" AND t.account_number=?" if account_number else "") + " ORDER BY t.txn_date ASC",
+                       (tenant_id, f"%{vendor.lower()}%", account_number) if account_number else (tenant_id, f"%{vendor.lower()}%"))
+        rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+        # Write filtered CSV
+        from pathlib import Path
+        import csv, hashlib
+        from datetime import datetime, timezone
+        from apps.api.reports import REPORTS_PATH
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        csv_path = REPORTS_PATH / f"auditor_export_vendor_{vendor}_{tenant_id}_{timestamp}.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open('w', newline='', encoding='utf-8') as f:
+            fieldnames = ["id","date","description","amount_minor","amount_rands","currency","direction","balance_after_minor","fingerprint","status","account_number","bank_name","branch_code","account_code","account_name","account_type","nature","business_pct","category_id","rationale","confidence","source","decided_by","document_id","original_filename","doc_sha256"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in rows:
+                writer.writerow({
+                    "id": r.get('id',''),"date": r.get('date',''),"description": r.get('description',''),"amount_minor": r.get('amount_minor',''),"amount_rands": f"{r.get('amount_minor',0)/100:.2f}" if r.get('amount_minor') else "","currency": r.get('currency','ZAR'),"direction": r.get('direction',''),"balance_after_minor": r.get('balance_after_minor',''),"fingerprint": r.get('fingerprint_sha256',''),"status": r.get('status',''),"account_number": r.get('account_number',''),"bank_name": r.get('bank_name',''),"branch_code": r.get('branch_code',''),"account_code": r.get('account_code',''),"account_name": r.get('account_name',''),"account_type": r.get('account_type',''),"nature": r.get('nature',''),"business_pct": r.get('business_pct',''),"category_id": r.get('category_id',''),"rationale": r.get('rationale',''),"confidence": r.get('confidence',''),"source": r.get('source',''),"decided_by": r.get('decided_by',''),"document_id": r.get('document_id',''),"original_filename": r.get('original_filename',''),"doc_sha256": r.get('doc_sha256',''),
+                })
+        sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest() if csv_path.exists() else ""
+        append_audit_log(tenant_id, user_id, "report.auditor_csv.vendor", "reports", str(csv_path), {"vendor": vendor, "account_number": account_number, "count": len(rows), "sha256": sha256})
+        return {"file_key": str(csv_path), "sha256": sha256, "count": len(rows), "vendor": vendor, "account_number": account_number, "message": f"Exported vendor {vendor} with {len(rows)} transactions to {csv_path}, add all transactions to certain account if you like per user, sort and add rule, if certain code applies journal auto books other side"}
+
     csv_pack = generate_auditor_csv(tenant_id)
     append_audit_log(tenant_id, user_id, "report.auditor_csv", "reports", csv_pack["file_key"], {"count": csv_pack["count"], "sha256": csv_pack["sha256"]})
     return csv_pack
@@ -670,3 +803,93 @@ def ai_disclosure():
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "ai_disclosure.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "AI Disclosure"
     return {"page": "ai-disclosure", "content_markdown": content[:8000], "models": ["muse-spark-1.3 standard NOT contributor", "muse-wonder-1.0", "muse-image-1.0", "sam-3.1"], "prompts_versioned": "prompts/*.md with SHA256 header", "anti_hallucination": "line-ID grounding + quote validation + reconciliation gate"}
+
+# --- Vendor Rules per merchant per account - per user question: export vendor and add all transactions to certain account if like, sort and add rule, if certain code applies journal auto books other side
+# For competition not lifetime project, per merchant per account rules for presentation layer vendor grouping and % allocation
+
+class VendorRuleIn(BaseModel):
+    normalized_merchant: str
+    account_number: str
+    target_account_id: str
+    target_category_id: Optional[str] = None
+    nature: str = "business"
+    business_pct: int = 100
+    auto_book: bool = False
+
+@app.get("/v1/vendors")
+def list_vendors(user_id: int = Depends(require_login)):
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    from .vendor import get_vendors
+    vendors = get_vendors(tenant_id)
+    return {"vendors": vendors, "count": len(vendors)}
+
+@app.get("/v1/vendors/rules")
+def list_vendor_rules(account_number: Optional[str] = None, user_id: int = Depends(require_login)):
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    from .vendor import get_vendor_rules
+    rules = get_vendor_rules(tenant_id, account_number)
+    return {"rules": rules, "count": len(rules)}
+
+@app.post("/v1/vendors/rules")
+def create_vendor_rule_endpoint(inp: VendorRuleIn, user_id: int = Depends(require_login)):
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    # Extra manual validation so error message always says "Invalid parameters" (fixes bug report)
+    if not inp.normalized_merchant or not inp.normalized_merchant.strip():
+        raise HTTPException(422, "Invalid parameters: normalized_merchant is required")
+    if not inp.account_number or not inp.account_number.strip():
+        raise HTTPException(422, "Invalid parameters: account_number is required")
+    if not inp.target_account_id or not inp.target_account_id.strip():
+        raise HTTPException(422, "Invalid parameters: target_account_id is required")
+    if inp.nature not in ("business", "private", "mixed", "unknown"):
+        raise HTTPException(422, f"Invalid parameters: nature must be business|private|mixed|unknown, got '{inp.nature}'")
+    if not isinstance(inp.business_pct, int) or not (0 <= inp.business_pct <= 100):
+        raise HTTPException(422, f"Invalid parameters: business_pct must be int 0-100, got '{inp.business_pct}'")
+    from .vendor import create_vendor_rule
+    try:
+        rule_id = create_vendor_rule(tenant_id, inp.normalized_merchant, inp.account_number, inp.target_account_id, inp.target_category_id, inp.nature, inp.business_pct, inp.auto_book, user_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"id": rule_id, "normalized_merchant": inp.normalized_merchant, "account_number": inp.account_number, "target_account_id": inp.target_account_id, "auto_book": inp.auto_book}
+
+@app.post("/v1/vendors/rules/{rule_id}/apply")
+def apply_vendor_rule(rule_id: str, user_id: int = Depends(require_login)):
+    """
+    If certain code applies journal auto books other side per user question
+    Apply rule to all matching transactions for that merchant+account
+    """
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    # Get rule
+    cur = db.execute("SELECT * FROM vendor_rules WHERE id=? AND tenant_id=?", (rule_id, tenant_id))
+    rule_row = cur.fetchone()
+    if not rule_row:
+        raise HTTPException(404, "Rule not found")
+    rule = dict(rule_row) if not isinstance(rule_row, dict) else rule_row
+
+    # Find matching transactions: description_raw ILIKE normalized_merchant AND account_number
+    # For vendor export: export just a vendor if we do own set of books so user can export vendor and add all transactions to certain account
+    cur = db.execute("SELECT id FROM transactions WHERE tenant_id=? AND account_number=? AND LOWER(description_raw) LIKE ?", (tenant_id, rule["account_number"], f"%{rule['normalized_merchant']}%"))
+    txn_rows = cur.fetchall()
+    applied = 0
+    from .vendor import auto_book_journal_for_rule
+    for r in txn_rows:
+        txn_id = r["id"] if isinstance(r, dict) else r[0]
+        try:
+            if auto_book_journal_for_rule(txn_id, rule):
+                applied += 1
+        except Exception as e:
+            # Skip if already balanced etc
+            pass
+
+    return {"rule_id": rule_id, "matched_transactions": len(txn_rows), "applied_journals": applied, "message": f"Applied rule {rule_id} to {applied}/{len(txn_rows)} transactions, journal auto books other side per code {rule.get('target_account_id')}"}

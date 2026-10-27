@@ -1,0 +1,85 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FIN_SPY - Statement and Extraction Side by Side</title>
+<style>
+body { font-family: monospace; margin: 0; padding: 20px; background: #0f172a; color: #e2e8f0; }
+.container { display: flex; gap: 20px; }
+.left, .right { flex: 1; border: 1px solid #1e293b; border-radius: 8px; padding: 15px; background: #1e293b; height: 90vh; overflow-y: auto; }
+h2 { color: #38bdf8; }
+.line { margin: 2px 0; padding: 2px 5px; border-left: 3px solid transparent; }
+.line:hover { background: #2d3748; border-left-color: #38bdf8; }
+.line-id { color: #fbbf24; font-weight: bold; }
+.bbox { color: #94a3b8; font-size: 0.8em; }
+.transaction { border: 1px solid #334155; margin: 10px 0; padding: 10px; border-radius: 5px; background: #0f172a; }
+.transaction:hover { border-color: #38bdf8; }
+.debit { color: #f87171; }
+.credit { color: #4ade80; }
+.pass { color: #4ade80; }
+.fail { color: #f87171; }
+.tamper { background: #7f1d1d; padding: 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>FIN_SPY - Statement and Extraction Side by Side</h1>
+<p>PDF: statement.pdf | Is Bank Statement: True Confidence: 100% | Reasons: mime/extension application/pdf/statement.pdf likely bank statement, Found 8 bank keywords, Found 3 SA bank patterns</p>
+<div class="container">
+<div class="left">
+<h2>📄 Original Statement (Left) - Line-ID Grounding</h2>
+<p>Every line has Lxxx ID + bbox for traceability per AGENTS.md</p>
+<h3>Page 1 - 595.0x842.0</h3><div class='line'><span class='line-id'>L001</span> <span class='bbox'>[50,739,293,753]</span> FNB Statement - Account 123456789 - Branch 250655</div>
+<div class='line'><span class='line-id'>L002</span> <span class='bbox'>[50,719,207,733]</span> Period: 01 Oct 2026 to 31 Oct 2026</div>
+<div class='line'><span class='line-id'>L003</span> <span class='bbox'>[50,699,184,713]</span> Opening Balance: R12 340.55</div>
+<div class='line'><span class='line-id'>L004</span> <span class='bbox'>[50,679,283,693]</span> Date Description Amount Balance</div>
+<div class='line'><span class='line-id'>L005</span> <span class='bbox'>[50,659,308,673]</span> 25 Oct 2026 WOOLWORTHS CT R450,00- R11 890,55</div>
+<div class='line'><span class='line-id'>L006</span> <span class='bbox'>[50,639,353,653]</span> 26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00- R6 890,55</div>
+<div class='line'><span class='line-id'>L007</span> <span class='bbox'>[50,619,331,633]</span> 27 Oct 2026 SALARY - ABC CORP R15 000,00+ R21 890,55</div>
+<div class='line'><span class='line-id'>L008</span> <span class='bbox'>[50,599,274,613]</span> 28 Oct 2026 SHELL FUEL R800,00- R21 090,55</div>
+<div class='line'><span class='line-id'>L009</span> <span class='bbox'>[50,579,266,593]</span> 29 Oct 2026 VODACOM R300,00- R20 790,55</div>
+<div class='line'><span class='line-id'>L010</span> <span class='bbox'>[50,559,180,573]</span> Closing Balance: R20 790,55</div>
+<div class='line'><span class='line-id'>L011</span> <span class='bbox'>[50,539,101,553]</span> Page 1 of 1</div>
+
+</div>
+<div class="right">
+<h2>🔍 Extraction (Right) - DB-first</h2>
+<p>Statement: {'bank': None, 'account_mask': None, 'period_start': None, 'period_end': None, 'currency': 'ZAR', 'opening_balance': None, 'closing_balance': None}</p>
+<p>Opening: None Closing: None Warnings: ['LLM fallback mock - implement real Meta call']</p>
+
+<h3>Reconciliation Gate - Totals +/- == Balance Top->Bottom + Bottom->Top</h3>
+<div class="fail">
+  <p><strong>Overall:</strong> fail - FAIL</p>
+  <p>Top->Bottom: Opening or closing None - skip gate per Appendix A reconciliation na</p>
+  <p>Bottom->Top: Opening or closing None - skip reverse gate</p>
+  <p>Running Top->Bottom: PASS []</p>
+  <p>Running Bottom->Top: PASS []</p>
+  <p>Duplicates: FAIL [{'type': 'exact_duplicate', 'line_ids': ['L002'], 'dup_of': ['L001'], 'fingerprint': 'f2c6ac2732bc3fa893612d4bfb592e759ee9d6afbfe8c4fc61db17add85c068d'}]</p>
+  <p>Totals Check: opening None + sum = closing None pass=True | closing None - sum = opening None pass=True</p>
+  <p><em>Totals +/- == balance from top to bottom and from bottom to top per user question - both directions must match within 1 Rand tolerance</em></p>
+</div>
+
+<h3>Extracted Transactions - Each cites line_ids + source_quote</h3>
+
+<div class='transaction'>
+  <div><span class='line-id'>L001</span> <strong>2026-10-26</strong> LLM Fallback Mock <span class='debit'>R100.00 debit</span> Balance: R0.00</div>
+  <div class='bbox'>Source Quote: "FNB Statement - Account 123456789 - Branch 250655"</div>
+  <div>Fingerprint: fb6ab21c943a3e6e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+</div>
+
+<div class='transaction'>
+  <div><span class='line-id'>L002</span> <strong>2026-10-26</strong> LLM Fallback Mock <span class='debit'>R100.00 debit</span> Balance: R0.00</div>
+  <div class='bbox'>Source Quote: "Period: 01 Oct 2026 to 31 Oct 2026"</div>
+  <div>Fingerprint: fb6ab21c943a3e6e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+</div>
+
+<h3>Unaccounted Lines</h3>
+<ul>
+<li>L003: noise</li>
+<li>L004: noise</li>
+</ul>
+</div>
+</div>
+<p style="margin-top:20px; font-size:0.8em; color:#94a3b8;">Per AGENTS.md: DB-first Extract -> persist to .db with spans page bbox line_id + fingerprint -> all products read DB. Every transaction traceable to exact bbox on original per SourceViewer component. Reconciliation gate blocks court-report inclusion until human resolves per docs/PLAN.md. Built with Meta Muse Spark/Wonder/Image/SAM 3.1</p>
+</body>
+</html>

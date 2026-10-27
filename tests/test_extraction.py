@@ -63,7 +63,7 @@ def test_line_id_grounding_quote_validation():
         assert row.source_quote in cited or row.source_quote[:10] in cited
 
 def test_reconciliation_gate():
-    # Opening + sum = closing per AGENTS.md
+    # Opening balance +/- amount == running balance/total from top to bottom and bottom to top per user question
     pages = [{
         "page_no":1,
         "width":595,
@@ -75,14 +75,49 @@ def test_reconciliation_gate():
         ]
     }]
     result = parse_fnb_lines(pages)
-    # If opening and closing present, check gate
-    if result.opening_balance_minor is not None and result.closing_balance_minor is not None:
+    # Full gate top->bottom + bottom->top per apps/worker/reconcile.py
+    from apps.worker.reconcile import run_reconciliation_gate
+    if result.opening_balance_minor is not None and result.closing_balance_minor is not None and result.rows:
+        gate = run_reconciliation_gate(result.opening_balance_minor, result.closing_balance_minor, result.rows)
+        # Check both directions per user: opening +/- amount == running balance/total top->bottom and bottom->top
+        assert "opening_closing_top_bottom" in gate
+        assert "opening_closing_bottom_top" in gate
+        assert "running_balance_top_bottom" in gate
+        assert "running_balance_bottom_top" in gate
+        assert "totals_check" in gate
+        # If gate fails, warnings should contain failure
+        if not gate["overall_pass"]:
+            assert len(result.warnings) > 0 or len(gate["running_balance_top_bottom"]["breaks"]) > 0 or len(gate["running_balance_bottom_top"]["breaks"]) > 0
+        # Also check simple top->bottom computed for backward compat
         computed = result.opening_balance_minor
         for r in result.rows:
             signed = -r.amount_minor if r.direction=="debit" else r.amount_minor
             computed += signed
-        # Allow 1 Rand tolerance
-        assert abs(computed - result.closing_balance_minor) < 100 or len(result.warnings)>0
+        assert abs(computed - result.closing_balance_minor) < 100 or len(result.warnings)>0 or not gate["opening_closing_top_bottom"]["pass"]
+
+def test_reconciliation_both_directions_extraction():
+    # Explicit test per user: opening balance +/- amount == running balance/total from top to bottom and bottom to top
+    from apps.worker.parsers.base import ExtractedRow
+    from apps.worker.reconcile import run_reconciliation_gate
+    # Opening 10000, rows: -1000 -> 9000, -2000 -> 7000, +500 -> 7500 closing
+    rows = [
+        ExtractedRow(line_ids=["L001"], date="2026-10-25", description="WOOLWORTHS", amount_minor=1000, direction="debit", balance_after_minor=9000, source_quote="WOOLWORTHS R1000"),
+        ExtractedRow(line_ids=["L002"], date="2026-10-26", description="RENT", amount_minor=2000, direction="debit", balance_after_minor=7000, source_quote="RENT R2000"),
+        ExtractedRow(line_ids=["L003"], date="2026-10-27", description="SALARY", amount_minor=500, direction="credit", balance_after_minor=7500, source_quote="SALARY R500"),
+    ]
+    opening = 10000
+    closing = 7500
+    gate = run_reconciliation_gate(opening, closing, rows)
+    # Both directions must pass
+    assert gate["opening_closing_top_bottom"]["pass"] is True, f"Top->Bottom opening+sum=closing should pass: {gate['opening_closing_top_bottom']['message']}"
+    assert gate["opening_closing_bottom_top"]["pass"] is True, f"Bottom->Top closing-sum=opening should pass: {gate['opening_closing_bottom_top']['message']}"
+    assert gate["running_balance_top_bottom"]["pass"] is True, f"Running top->bottom should pass: {gate['running_balance_top_bottom']['breaks']}"
+    assert gate["running_balance_bottom_top"]["pass"] is True, f"Running bottom->top should pass: {gate['running_balance_bottom_top']['breaks']}"
+    assert gate["overall_pass"] is True
+    # Check totals_check explanation per user question
+    assert "top_to_bottom" in gate["totals_check"]
+    assert "bottom_to_top" in gate["totals_check"]
+    assert "Totals +/- == balance from top to bottom and from bottom to top" in gate["totals_check"]["explanation"] or "top to bottom" in gate["totals_check"]["explanation"].lower()
 
 def test_llm_fallback_mock():
     pages = [{

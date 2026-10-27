@@ -59,13 +59,61 @@ class MetaClient:
         """
         Complete with validation against Capabilities.effort_levels, front-loaded system prompt.
         Rules+goal at START per Meta prompting guide.
+        Real implementation: OpenAI-compatible client via base_url + model_id + api_key per config/models.yaml
+        For hackathon: freellmapi dev proxy muse-spark-1.1 at http://127.0.0.1:3001/v1 + meta_official muse-spark-1.3 at https://api.llama.com/compat/v1 with $123.88 credits
         """
         if effort not in self.capabilities.effort_levels and self.capabilities.effort_levels:
-            # fallback gracefully per playbook
             effort = self.capabilities.effort_levels[0]
-        # TODO: implement OpenAI-compatible client call via base_url + model_id
-        # For scaffold, return fake for tests/fakes
-        return ModelResult(content="Mock completion - implement with openai SDK against base_url", model_id=self.model_id, usage={"prompt_tokens": 100, "completion_tokens": 50})
+
+        # Try real API call if key available
+        api_key = os.getenv("META_API_KEY") if self.provider=="meta_official" else os.getenv("FREELLMAPI_API_KEY") if self.provider=="freellmapi" else os.getenv("OLLAMA_API_KEY") or "ollama"
+        if not api_key and self.provider != "ollama":
+            # No key -> mock for tests/fakes
+            return ModelResult(content="Mock completion - no API key, implement with openai SDK", model_id=self.model_id, usage={"prompt_tokens": 0, "completion_tokens": 0})
+
+        try:
+            from openai import OpenAI
+            client = OpenAI(base_url=self.base_url, api_key=api_key)
+
+            # Build params
+            kwargs = {
+                "model": self.model_id,
+                "messages": messages,
+                "temperature": 0.2,  # Low temp for extraction per prompts/extract_sa_bank_v1.md
+                "max_tokens": 8192,
+            }
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            if response_schema and self.capabilities.supports_structured_output:
+                # Try structured output via response_format json_schema if provider supports
+                try:
+                    kwargs["response_format"] = {"type": "json_object"}
+                except:
+                    pass
+            # Effort mapping: for Spark, use reasoning_effort header? For now pass via extra param if supported
+            # Meta provider uses effort in extra_body? For scaffold, ignore
+
+            resp = client.chat.completions.create(**kwargs)
+            choice = resp.choices[0]
+            content = choice.message.content or ""
+            tool_calls = []
+            if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
+                for tc in choice.message.tool_calls:
+                    tool_calls.append({"name": tc.function.name, "arguments": tc.function.arguments, "id": tc.id})
+
+            usage = {}
+            if hasattr(resp, 'usage') and resp.usage:
+                usage = {"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens, "total_tokens": resp.usage.total_tokens}
+
+            return ModelResult(content=content, tool_calls=tool_calls, usage=usage, finish_reason=choice.finish_reason, model_id=self.model_id)
+
+        except Exception as e:
+            # Fallback to mock for tests/fakes if API fails, but log
+            # For hackathon, log token usage for cost guard per config/models.yaml per_document_token_ceiling 15000
+            print(f"MetaClient complete failed provider {self.provider} model {self.model_id} base {self.base_url}: {e} - returning mock for tests")
+            # Return mock that will trigger validation failure and fallback to deterministic parser per docs/PLAN.md
+            return ModelResult(content=f'{{"statement":{{"currency":"ZAR","opening_balance":null,"closing_balance":null}},"rows":[],"unaccounted_lines":[],"warnings":["LLM fallback mock due to API error: {e}"]}}', model_id=self.model_id, usage={"prompt_tokens": 0, "completion_tokens": 0, "error": str(e)})
 
 def local_first_router(text_to_send: str, user_approved: bool = False, local_model_available: bool = True) -> str:
     """

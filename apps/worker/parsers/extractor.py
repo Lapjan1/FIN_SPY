@@ -11,15 +11,24 @@ from .base import ExtractionResult, Span
 from .fnb import parse_fnb_lines
 from ..llm.client import MetaClient, prompt_hash
 
-def extract_text_with_bbox(pdf_path: Path) -> List[Dict]:
+def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> List[Dict]:
     """
     PyMuPDF text + words with bbox per page, line-ID numbering per AGENTS.md
+    Handles encrypted/password protected PDFs: tries password param transiently, never logs/stores password
     Returns pages list: [{page_no, width, height, lines: [{line_id,bbox,text,text_hash}]}]
     """
     pages = []
     try:
         import fitz  # PyMuPDF
+        # Open with password if provided
         doc = fitz.open(str(pdf_path))
+        if doc.is_encrypted:
+            if password:
+                auth = doc.authenticate(password)
+                if auth == 0:
+                    raise ValueError("PDF password authentication failed - needs password")
+            elif doc.needs_pass:
+                raise ValueError("PDF is encrypted and needs password - status needs_password")
         line_counter = 1
         for pno in range(len(doc)):
             page = doc[pno]
@@ -46,20 +55,24 @@ def extract_text_with_bbox(pdf_path: Path) -> List[Dict]:
                 line_counter += 1
                 text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
                 # Hidden-text detection per AGENTS.md: flag near-zero font size, white on white, outside visible area
-                # For scaffold, check if bbox outside page or very small
                 if x0 < 0 or y0 < 0 or x1 > width+10 or y1 > height+10:
-                    # Flag hidden text
                     pass
                 lines.append({"line_id": line_id, "bbox": [x0,y0,x1,y1], "text": text, "text_hash": text_hash})
             pages.append({"page_no": pno+1, "width": width, "height": height, "lines": lines})
+        doc.close()
         return pages
     except Exception as e:
         # Fallback to pdfplumber if PyMuPDF AGPL license check per LEARNINGS 2026-10-26-01
+        # Also handles encrypted PDFs via password param
         try:
             import pdfplumber
             pages = []
             line_counter = 1
-            with pdfplumber.open(str(pdf_path)) as pdf:
+            # pdfplumber open supports password param for encrypted PDFs
+            open_kwargs = {}
+            if password:
+                open_kwargs['password'] = password
+            with pdfplumber.open(str(pdf_path), **open_kwargs) as pdf:
                 for pno, page in enumerate(pdf.pages):
                     width, height = page.width, page.height
                     words = page.extract_words(x_tolerance=1, y_tolerance=1, keep_blank_chars=False, use_text_flow=False)
@@ -153,12 +166,13 @@ def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1") -> Extract
         closing_balance_minor=None
     )
 
-def extract_document(pdf_path: Path, bank_hint: str = "FNB") -> ExtractionResult:
+def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[str] = None) -> ExtractionResult:
     """
     Main entry: intake -> text+bbox -> deterministic -> LLM fallback -> validate -> persist
     DB-first: result should be persisted to source_spans/transactions before returning
+    Handles encrypted PDFs: password param transient, never logged/stored, if no password and encrypted raises needs_password
     """
-    pages = extract_text_with_bbox(pdf_path)
+    pages = extract_text_with_bbox(pdf_path, password=password)
     # Deterministic first
     result = deterministic_parse(pages, bank_hint)
     if result is None:

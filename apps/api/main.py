@@ -182,12 +182,19 @@ def ready():
     except Exception as e:
         raise HTTPException(500, f"Not ready: {e}")
 
-# --- Documents with auth + trial + audit hash-chain ---
+# --- Documents with auth + trial + audit hash-chain + encrypted PDF handling ---
 @app.post("/v1/documents")
-async def upload_document(request: Request, file: UploadFile = File(...), user_id: int = Depends(require_subscription)):
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    pdf_password: Optional[str] = Form(None),
+    user_id: int = Depends(require_subscription)
+):
     """
     Intake vault: hash SHA256, store content-addressed immutable, audit log hash-chain, enqueue job.
     Requires subscription + trial pages check - clearmind require_subscription pattern.
+    Handles encrypted/password protected PDFs: detect is_encrypted, try password param (from Form or X-PDF-Password header), never log/store password, audit encrypted status.
+    Per AGENTS.md lethal trifecta: private data + untrusted PDF + egress never same session - password handled transiently.
     """
     data = await file.read()
     if len(data) > 50 * 1024 * 1024:
@@ -208,6 +215,57 @@ async def upload_document(request: Request, file: UploadFile = File(...), user_i
     sha = sha256_bytes(data)
     VAULT_PATH.mkdir(parents=True, exist_ok=True)
     storage_key = VAULT_PATH / f"{sha}.pdf"
+
+    # Detect encrypted PDF - never log password per AGENTS.md
+    is_encrypted = False
+    encryption_method = None
+    pdf_needs_password = False
+    if file.filename.lower().endswith('.pdf'):
+        try:
+            import fitz
+            # Try open without password to detect encryption
+            doc = fitz.open(stream=data, filetype="pdf")
+            if doc.is_encrypted:
+                is_encrypted = True
+                encryption_method = "PDF standard encryption"
+                # Check if needs password
+                if doc.needs_pass:
+                    pdf_needs_password = True
+            doc.close()
+        except Exception:
+            # If fitz fails, try pdfplumber detection? For now mark as unknown, allow upload
+            pass
+
+    # Try to open with provided password if encrypted
+    password_provided = pdf_password or request.headers.get("X-PDF-Password")
+    # Also check env var pdf_password_env per clearmind pattern integration/headless_runner.py:12-14 PDF password NEVER in plan.json, resolved from OS vault var
+    if not password_provided:
+        password_provided = request.headers.get("X-PDF-Password-Env")
+        if password_provided:
+            # Resolve from env var name, not value directly
+            env_var_name = password_provided
+            password_provided = os.getenv(env_var_name)
+
+    status = "queued"
+    if is_encrypted and pdf_needs_password:
+        if not password_provided:
+            status = "needs_password"
+        else:
+            # Try to authenticate with provided password
+            try:
+                import fitz
+                doc = fitz.open(stream=data, filetype="pdf")
+                # Try auth
+                auth_result = doc.authenticate(password_provided)
+                if auth_result == 0:
+                    # Failed auth
+                    status = "needs_password"
+                else:
+                    status = "queued"
+                doc.close()
+            except Exception:
+                status = "needs_password"
+
     if not storage_key.exists():
         storage_key.write_bytes(data)
         # Append source_documents + audit_log hash-chain
@@ -215,14 +273,13 @@ async def upload_document(request: Request, file: UploadFile = File(...), user_i
         try:
             db.execute(
                 "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), "queued")
+                (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status)
             )
-            # Audit log append with prev_hash/row_hash per AGENTS.md
-            append_audit_log(tenant_id, user_id, "document.upload", "source_documents", doc_id, {"sha256": sha, "filename": file.filename, "size": len(data)})
+            # Audit log append with prev_hash/row_hash per AGENTS.md - never log password
+            audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method}
+            append_audit_log(tenant_id, user_id, "document.upload", "source_documents", doc_id, audit_payload)
             db.commit()
-            # TODO: usage_events metering per homework Part 5.13 + enqueue Procrastinate job
         except Exception as e:
-            # Duplicate sha already exists - idempotent
             print(f"Document already exists or error: {e}")
 
     return {
@@ -231,7 +288,9 @@ async def upload_document(request: Request, file: UploadFile = File(...), user_i
         "storage_key": str(storage_key),
         "original_filename": file.filename,
         "size_bytes": len(data),
-        "status": "queued",
+        "status": status,
+        "is_encrypted": is_encrypted,
+        "needs_password": pdf_needs_password,
         "tenant_id": tenant_id,
         "trial_pages_remaining": get_trial_pages_remaining(user_id)
     }

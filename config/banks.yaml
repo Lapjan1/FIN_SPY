@@ -1,0 +1,186 @@
+# Banks registry - entity register bankcodes and deviations per bank
+# Based on 25+ bank adaptors READ for design (FNBP reference) never copied per AGENTS.md
+# For perfect health extractor per user question: entity register bankcodes and deviations per bank
+
+banks:
+  FNB:
+    full_name: "First National Bank"
+    bankcodes:
+      - "250655"  # Universal branch code
+      - "250655"  # Example FNB branch codes vary but universal is 250655
+    deviations:
+      date_patterns:
+        - "25 Oct 2026"  # DD Mon YYYY
+        - "2026/10/25"   # YYYY/MM/DD
+        - "25-10-2026"   # DD-MM-YYYY
+      amount_patterns:
+        - "R450,00-"    # Trailing minus with comma decimal and space thousands
+        - "R15 000,00+" # Trailing plus with space thousands
+        - "R1 234,56"   # Space thousands comma decimal
+        - "(450.00)"    # Parentheses negative
+      trailing_minus: true
+      trailing_plus: true
+      comma_decimal: true
+      space_thousands: true
+      cr_dr_suffix: false
+      parentheses_negative: false
+      opening_keywords: ["Opening Balance"]
+      closing_keywords: ["Closing Balance"]
+      account_regex: "Account Number\\s*[:#]?\\s*(\\d+)"
+      branch_code_regex: "Branch Code\\s*[:#]?\\s*(\\d+)"
+      balance_after_present: true
+      running_balance_present: true
+
+  STDB:
+    full_name: "Standard Bank"
+    bankcodes:
+      - "051001"  # Standard Bank universal
+    deviations:
+      date_patterns:
+        - "25 Oct 2026"
+        - "2026-10-25"   # STDB often YYYY-MM-DD
+      amount_patterns:
+        - "450.00 Cr"   # Cr suffix for credit
+        - "450.00 Dr"   # Dr suffix for debit
+        - "R 1,234.56"  # Comma thousands dot decimal US style
+      trailing_minus: false
+      trailing_plus: false
+      comma_decimal: false
+      space_thousands: false
+      cr_dr_suffix: true
+      parentheses_negative: false
+      opening_keywords: ["Opening Balance", "Balance Brought Forward"]
+      closing_keywords: ["Closing Balance", "Balance Carried Forward"]
+      account_regex: "Account No\\s*[:#]?\\s*(\\d+)"
+      branch_code_regex: "Branch\\s*[:#]?\\s*(\\d+)"
+      balance_after_present: true
+      running_balance_present: true
+
+  ABSA:
+    full_name: "Absa Bank"
+    bankcodes:
+      - "632005"  # Absa universal
+    deviations:
+      date_patterns:
+        - "25/10/2026"  # DD/MM/YYYY common for Absa
+        - "2026/10/25"
+      amount_patterns:
+        - "(450.00)"    # Parentheses negative common
+        - "R450.00"     # Dot decimal
+        - "1 234.56"    # Space thousands dot decimal
+      trailing_minus: false
+      trailing_plus: false
+      comma_decimal: false
+      space_thousands: true
+      cr_dr_suffix: false
+      parentheses_negative: true
+      opening_keywords: ["Opening Balance"]
+      closing_keywords: ["Closing Balance"]
+      account_regex: "Account Number\\s*[:#]?\\s*(\\d+)"
+      branch_code_regex: "Branch Code\\s*[:#]?\\s*(\\d+)"
+      balance_after_present: true
+      running_balance_present: true
+
+  Nedbank:
+    full_name: "Nedbank"
+    bankcodes:
+      - "198765"  # Nedbank universal
+    deviations:
+      date_patterns:
+        - "25 Oct 2026"
+        - "25-10-2026"
+      amount_patterns:
+        - "R 450.00-"   # Space + trailing minus
+        - "R 1,234.56" # Comma thousands
+      trailing_minus: true
+      trailing_plus: false
+      comma_decimal: false
+      space_thousands: false
+      cr_dr_suffix: false
+      parentheses_negative: false
+      opening_keywords: ["Opening Balance"]
+      closing_keywords: ["Closing Balance"]
+      account_regex: "Account No\\s*[:#]?\\s*(\\d+)"
+      branch_code_regex: "Branch Code\\s*[:#]?\\s*(\\d+)"
+      balance_after_present: true
+      running_balance_present: true
+
+  Capitec:
+    full_name: "Capitec Bank"
+    bankcodes:
+      - "470010"  # Capitec universal
+    deviations:
+      date_patterns:
+        - "25 Oct 2026"
+        - "2026/10/25"
+      amount_patterns:
+        - "R1 234.56"   # Space thousands dot decimal
+        - "-R450.00"    # Leading minus
+      trailing_minus: false
+      leading_minus: true
+      comma_decimal: false
+      space_thousands: true
+      cr_dr_suffix: false
+      parentheses_negative: false
+      opening_keywords: ["Opening Balance", "Available Balance"]
+      closing_keywords: ["Closing Balance", "Available Balance"]
+      account_regex: "Account Number\\s*[:#]?\\s*(\\d+)"
+      branch_code_regex: "Branch Code\\s*[:#]?\\s*(\\d+)"
+      balance_after_present: true
+      running_balance_present: true
+
+# Entity register - for multi-entity per tenant
+entities:
+  personal:
+    code: "PERS"
+    name: "Personal"
+    type: "personal"
+  business:
+    code: "BUS"
+    name: "Business"
+    type: "business"
+
+# COA seed generic SA per LEARNINGS 2026-10-26-02 dynamic per tenant not hardcoded
+coa_seed:
+  - code: "1000"
+    name: "Bank - FNB"
+    type: "asset"
+  - code: "1001"
+    name: "Bank - Standard Bank"
+    type: "asset"
+  - code: "1002"
+    name: "Bank - Absa"
+    type: "asset"
+  - code: "1003"
+    name: "Bank - Nedbank"
+    type: "asset"
+  - code: "1004"
+    name: "Bank - Capitec"
+    type: "asset"
+  - code: "4000"
+    name: "Sales"
+    type: "income"
+  - code: "4100"
+    name: "Cost of Sales"
+    type: "expense"
+  - code: "6000"
+    name: "Marketing"
+    type: "expense"
+  - code: "6100"
+    name: "Rent"
+    type: "expense"
+  - code: "6200"
+    name: "Fuel"
+    type: "expense"
+  - code: "6300"
+    name: "Professional Fees"
+    type: "expense"
+  - code: "6600"
+    name: "Bank Charges"
+    type: "expense"
+  - code: "7000"
+    name: "Drawings / Director Loan"
+    type: "equity"
+  - code: "8000"
+    name: "Loan from Owner"
+    type: "liability"

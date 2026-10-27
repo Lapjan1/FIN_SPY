@@ -102,19 +102,47 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
 
 def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[ExtractionResult]:
     """
-    Try deterministic parsers first in order FNB, STDB, ABSA per homework
+    Try deterministic parsers first in order based on bank_hint or detected bank from registry
+    Uses config/banks.yaml registry + bankcodes and deviations per bank per user question entity register bankcodes and deviations per bank
     Returns ExtractionResult if confidence high, else None to trigger LLM fallback
     """
-    # Try FNB
-    try:
-        result = parse_fnb_lines(pages)
-        # Confidence check: if rows >= 50% of lines with dates, accept
-        total_lines = sum(len(p['lines']) for p in pages)
-        if len(result.rows) > 0 and len(result.rows) >= total_lines * 0.1:  # 10% threshold for scaffold
-            return result
-    except Exception as e:
-        pass
-    # TODO: STDB, ABSA parsers per 25+ adaptors reference
+    from .registry import detect_bank_from_text, get_bank_config
+    from .fnb import parse_fnb_lines
+    from .stdb import parse_stdb_lines
+    from .absa import parse_absa_lines
+
+    # Detect bank from text if not provided
+    all_text = " ".join([line['text'] for page in pages for line in page['lines']])
+    detected_bank = detect_bank_from_text(all_text) or bank_hint
+
+    # Try parsers in order based on detected bank or hint
+    parsers_order = []
+    if detected_bank == "FNB":
+        parsers_order = [parse_fnb_lines, parse_stdb_lines, parse_absa_lines]
+    elif detected_bank == "STDB":
+        parsers_order = [parse_stdb_lines, parse_fnb_lines, parse_absa_lines]
+    elif detected_bank == "ABSA":
+        parsers_order = [parse_absa_lines, parse_fnb_lines, parse_stdb_lines]
+    else:
+        # Default order per 25+ adaptors reference
+        parsers_order = [parse_fnb_lines, parse_stdb_lines, parse_absa_lines]
+
+    total_lines = sum(len(p['lines']) for p in pages)
+
+    for parser in parsers_order:
+        try:
+            result = parser(pages)
+            # Confidence check: rows >= 10% of total lines and at least 1 row
+            if len(result.rows) > 0 and len(result.rows) >= total_lines * 0.1:
+                # Check bank config deviations if available
+                bank_cfg = get_bank_config(detected_bank or bank_hint)
+                if bank_cfg:
+                    # Add bank info to statement
+                    result.statement['bank'] = detected_bank or bank_hint
+                return result
+        except Exception as e:
+            continue
+
     return None
 
 def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1") -> ExtractionResult:

@@ -35,6 +35,7 @@ One sentence: Give a South African business owner or individual a court-grade pe
 - Cost: cheapest path safe, free tiers first, every paid flagged. Demo $5-10. AI ~$0.04/8p statement, $150 credit ~3000 statements
 - Legal: "court-ready" = built to support admissibility (ECTA s15 reliability), not guaranteed. AI disclosure in every report. No FINSPIB import.
 - Hardware: 16GB ARM can't run Glimmer 30B 16.8GB Q4 - use hosted or smaller local model for private mode roadmap
+- Email: Resend free tier per homework Part 5.14 + clearmind SMTP pattern, worker only never browser, EMAIL_API_KEY env, EMAIL_FROM=noreply@fin-spy.example, SMTP_HOST/PORT/USER/PASS/FROM fallback, service apps/api/email.py send_email() tries Resend API POST https://api.resend.com/emails Bearer key else SMTP smtplib.SMTP starttls timeout 10s else logs mock + audit_log hash-chain, templates welcome.html reset.html payment_failed.html, no-reply from noreply@fin-spy.example reply-to support@, privacy log redacted never token in logs per AGENTS.md, for hackathon demo can return reset_token directly in API response like clearmind forgot_password.html:10 shows link openly dev mode, prod emails
 
 ## Done Means (acceptance checks -> become /goal checks + tests)
 - Given synthetic FNB CSV 200 tx, `pytest tests/golden` row accuracy >=99% digital, reconciliation pass 100% confirmed, 0 silent failures, every confirmed tx has >=1 source_spans line_id+bbox
@@ -45,3 +46,4 @@ One sentence: Give a South African business owner or individual a court-grade pe
 - Given evidence pack ZIP, `scripts/verify_pack.py` recomputes SHA256 each file vs manifest.json, manifest hash vs printed in PDF, TSA token verifies with openssl, PDF signature panel valid
 - Given 1000 tx, analyze <5s without LLM, <15s with LLM, queue respects 100 RPM global limiter, no duplicate charges on retry
 - Chat answers "What subscriptions can I cancel?" with tool calling, cites 3 subs with evidence links, no hallucination
+- Email: given register, welcome email sent via Resend if EMAIL_API_KEY set else logged mock + audit_log hash-chain email.mock_sent, no token in logs; given forgot, reset token uuid hex 1h expiry created + email sent with reset link APP_BASE_URL/reset?token=... 1h expiry, dev returns token directly like clearmind, prod emails; given payment_failed, email sent dunning 7 days read-only per refund policy; no-reply from noreply@fin-spy.example reply-to support@

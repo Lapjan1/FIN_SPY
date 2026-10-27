@@ -432,10 +432,242 @@ def init_db():
         is_active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now'))
     );
+
+    -- Indexes for performance per homework Done Means: 1000 tx analyze <5s without LLM, <15s with LLM, PowerBI export
+    CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, txn_date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint ON transactions(fingerprint_sha256);
+    CREATE INDEX IF NOT EXISTS idx_transactions_document ON transactions(document_id);
+    CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+    CREATE INDEX IF NOT EXISTS idx_source_documents_tenant_sha ON source_documents(tenant_id, sha256);
+    CREATE INDEX IF NOT EXISTS idx_source_documents_uploaded_by ON source_documents(uploaded_by);
+    CREATE INDEX IF NOT EXISTS idx_source_spans_tenant_doc ON source_spans(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_source_spans_run ON source_spans(run_id);
+    CREATE INDEX IF NOT EXISTS idx_classifications_tenant_txn ON classifications(tenant_id, transaction_id);
+    CREATE INDEX IF NOT EXISTS idx_classifications_category ON classifications(category_id);
+    CREATE INDEX IF NOT EXISTS idx_journal_entries_tenant_date ON journal_entries(tenant_id, entry_date);
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_object ON audit_log(tenant_id, object_type, object_id);
+    CREATE INDEX IF NOT EXISTS idx_flags_tenant_test ON flags(tenant_id, test_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_tenant_kind ON usage_events(tenant_id, kind);
+    CREATE INDEX IF NOT EXISTS idx_document_pages_doc ON document_pages(document_id);
+    CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs(document_id);
+    CREATE INDEX IF NOT EXISTS idx_transaction_sources_txn ON transaction_sources(transaction_id);
+    CREATE INDEX IF NOT EXISTS idx_transaction_sources_span ON transaction_sources(span_id);
+
+    -- Star-schema views for PowerBI export per homework Part 5.10: fact_transactions, fact_journal, dim_account, dim_category, dim_entity, dim_document, dim_date
+    -- dim_date as view (not table) to avoid conflict - generates calendar from transactions + journal_entries
+    CREATE VIEW IF NOT EXISTS fact_transactions AS
+        SELECT t.id, t.tenant_id, t.entity_id, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
+        FROM transactions t LEFT JOIN classifications c ON t.id = c.transaction_id;
+
+    CREATE VIEW IF NOT EXISTS fact_journal AS
+        SELECT je.id as entry_id, je.tenant_id, je.entity_id, je.entry_date as date, je.memo, je.transaction_id, je.classification_id, jl.id as line_id, jl.account_id, jl.debit_minor, jl.credit_minor, a.code as account_code, a.name as account_name, a.type as account_type
+        FROM journal_entries je JOIN journal_lines jl ON je.id = jl.entry_id LEFT JOIN accounts a ON jl.account_id = a.id;
+
+    CREATE VIEW IF NOT EXISTS dim_account AS
+        SELECT id, tenant_id, entity_id, code, name, type FROM accounts;
+
+    CREATE VIEW IF NOT EXISTS dim_category AS
+        SELECT DISTINCT category_id as id, category_id as name FROM classifications WHERE category_id IS NOT NULL
+        UNION
+        SELECT DISTINCT '6000' as id, 'Marketing' as name UNION SELECT '6100','Rent' UNION SELECT '6200','Fuel' UNION SELECT '6600','Bank Charges' UNION SELECT '7000','Drawings';
+
+    CREATE VIEW IF NOT EXISTS dim_entity AS
+        SELECT id, name, plan_code, status FROM tenants
+        UNION
+        SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL);
+
+    CREATE VIEW IF NOT EXISTS dim_document AS
+        SELECT id, tenant_id, sha256, original_filename, size_bytes, mime, uploaded_at_utc, status, legal_hold FROM source_documents;
+
+    CREATE VIEW IF NOT EXISTS dim_date AS
+        SELECT DISTINCT txn_date as date,
+               CAST(strftime('%Y', txn_date) AS INTEGER) as year,
+               CAST(strftime('%m', txn_date) AS INTEGER) as month,
+               CAST(strftime('%d', txn_date) AS INTEGER) as day,
+               CAST((strftime('%m', txn_date)+2)/3 AS INTEGER) as quarter,
+               CASE CAST(strftime('%m', txn_date) AS INTEGER)
+                 WHEN 1 THEN 'January' WHEN 2 THEN 'February' WHEN 3 THEN 'March' WHEN 4 THEN 'April'
+                 WHEN 5 THEN 'May' WHEN 6 THEN 'June' WHEN 7 THEN 'July' WHEN 8 THEN 'August'
+                 WHEN 9 THEN 'September' WHEN 10 THEN 'October' WHEN 11 THEN 'November' WHEN 12 THEN 'December'
+               END as month_name,
+               CAST(strftime('%w', txn_date) AS INTEGER) as day_of_week,
+               CASE WHEN CAST(strftime('%w', txn_date) AS INTEGER) IN (0,6) THEN 1 ELSE 0 END as is_weekend
+        FROM transactions
+        UNION
+        SELECT DISTINCT entry_date as date,
+               CAST(strftime('%Y', entry_date) AS INTEGER) as year,
+               CAST(strftime('%m', entry_date) AS INTEGER) as month,
+               CAST(strftime('%d', entry_date) AS INTEGER) as day,
+               CAST((strftime('%m', entry_date)+2)/3 AS INTEGER) as quarter,
+               CASE CAST(strftime('%m', entry_date) AS INTEGER)
+                 WHEN 1 THEN 'January' WHEN 2 THEN 'February' WHEN 3 THEN 'March' WHEN 4 THEN 'April'
+                 WHEN 5 THEN 'May' WHEN 6 THEN 'June' WHEN 7 THEN 'July' WHEN 8 THEN 'August'
+                 WHEN 9 THEN 'September' WHEN 10 THEN 'October' WHEN 11 THEN 'November' WHEN 12 THEN 'December'
+               END as month_name,
+               CAST(strftime('%w', entry_date) AS INTEGER) as day_of_week,
+               CASE WHEN CAST(strftime('%w', entry_date) AS INTEGER) IN (0,6) THEN 1 ELSE 0 END as is_weekend
+        FROM journal_entries WHERE entry_date IS NOT NULL;
+
+    -- Journal balance constraint: debits = credits per entry (double-entry accounting) per AGENTS.md ledger-core
+    -- Trigger checks after insert/update/delete of journal_lines, allows single line intermediate state but checks when count >=2
+    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_insert
+    AFTER INSERT ON journal_lines
+    FOR EACH ROW
+    BEGIN
+        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
+        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
+        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits per double-entry accounting')
+        END;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_update
+    AFTER UPDATE ON journal_lines
+    FOR EACH ROW
+    BEGIN
+        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
+        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
+        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+        END;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_delete
+    AFTER DELETE ON journal_lines
+    FOR EACH ROW
+    BEGIN
+        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id)
+        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) >= 2
+        THEN RAISE(ABORT, 'Journal entry not balanced after delete')
+        END;
+    END;
+
     """)
     # Migrations per clearmind pattern
     _ensure_schema(db)
+    # Ensure indexes for existing DBs (IF NOT EXISTS handles)
+    _ensure_indexes(db)
     db.commit()
+
+def _ensure_indexes(db: DbHandle):
+    # Indexes for performance per homework Done Means: 1000 tx analyze <5s without LLM, <15s with LLM, PowerBI export
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date ON transactions(tenant_id, txn_date);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint ON transactions(fingerprint_sha256);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_document ON transactions(document_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);",
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_tenant_sha ON source_documents(tenant_id, sha256);",
+        "CREATE INDEX IF NOT EXISTS idx_source_documents_uploaded_by ON source_documents(uploaded_by);",
+        "CREATE INDEX IF NOT EXISTS idx_source_spans_tenant_doc ON source_spans(tenant_id, document_id);",
+        "CREATE INDEX IF NOT EXISTS idx_source_spans_run ON source_spans(run_id);",
+        "CREATE INDEX IF NOT EXISTS idx_classifications_tenant_txn ON classifications(tenant_id, transaction_id);",
+        "CREATE INDEX IF NOT EXISTS idx_classifications_category ON classifications(category_id);",
+        "CREATE INDEX IF NOT EXISTS idx_journal_entries_tenant_date ON journal_entries(tenant_id, entry_date);",
+        "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);",
+        "CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_id);",
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_object ON audit_log(tenant_id, object_type, object_id);",
+        "CREATE INDEX IF NOT EXISTS idx_flags_tenant_test ON flags(tenant_id, test_id);",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_tenant_kind ON usage_events(tenant_id, kind);",
+        "CREATE INDEX IF NOT EXISTS idx_document_pages_doc ON document_pages(document_id);",
+        "CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs(document_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transaction_sources_txn ON transaction_sources(transaction_id);",
+        "CREATE INDEX IF NOT EXISTS idx_transaction_sources_span ON transaction_sources(span_id);",
+    ]
+    for sql in indexes:
+        try:
+            db.execute(sql)
+        except Exception:
+            pass
+
+    # Views for PowerBI star-schema per homework Part 5.10 - idempotent CREATE VIEW IF NOT EXISTS already in init_db, but ensure for existing DBs
+    # dim_date view generates calendar from transactions + journal_entries for PowerBI
+    views = [
+        """CREATE VIEW IF NOT EXISTS fact_transactions AS
+            SELECT t.id, t.tenant_id, t.entity_id, t.document_id, t.run_id, t.txn_date as date, t.description_raw, t.amount_minor, t.currency, t.direction, t.balance_after_minor, t.fingerprint_sha256, t.status, c.nature, c.business_pct, c.category_id, c.rationale, c.confidence
+            FROM transactions t LEFT JOIN classifications c ON t.id = c.transaction_id;""",
+        """CREATE VIEW IF NOT EXISTS fact_journal AS
+            SELECT je.id as entry_id, je.tenant_id, je.entity_id, je.entry_date as date, je.memo, je.transaction_id, je.classification_id, jl.id as line_id, jl.account_id, jl.debit_minor, jl.credit_minor, a.code as account_code, a.name as account_name, a.type as account_type
+            FROM journal_entries je JOIN journal_lines jl ON je.id = jl.entry_id LEFT JOIN accounts a ON jl.account_id = a.id;""",
+        """CREATE VIEW IF NOT EXISTS dim_account AS
+            SELECT id, tenant_id, entity_id, code, name, type FROM accounts;""",
+        """CREATE VIEW IF NOT EXISTS dim_category AS
+            SELECT DISTINCT category_id as id, category_id as name FROM classifications WHERE category_id IS NOT NULL
+            UNION SELECT DISTINCT '6000' as id, 'Marketing' as name UNION SELECT '6100','Rent' UNION SELECT '6200','Fuel' UNION SELECT '6600','Bank Charges' UNION SELECT '7000','Drawings';""",
+        """CREATE VIEW IF NOT EXISTS dim_entity AS
+            SELECT id, name, plan_code, status FROM tenants
+            UNION SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL);""",
+        """CREATE VIEW IF NOT EXISTS dim_document AS
+            SELECT id, tenant_id, sha256, original_filename, size_bytes, mime, uploaded_at_utc, status, legal_hold FROM source_documents;""",
+        """CREATE VIEW IF NOT EXISTS dim_date AS
+            SELECT DISTINCT txn_date as date,
+                   CAST(strftime('%Y', txn_date) AS INTEGER) as year,
+                   CAST(strftime('%m', txn_date) AS INTEGER) as month,
+                   CAST(strftime('%d', txn_date) AS INTEGER) as day,
+                   CAST((strftime('%m', txn_date)+2)/3 AS INTEGER) as quarter,
+                   CASE CAST(strftime('%m', txn_date) AS INTEGER)
+                     WHEN 1 THEN 'January' WHEN 2 THEN 'February' WHEN 3 THEN 'March' WHEN 4 THEN 'April'
+                     WHEN 5 THEN 'May' WHEN 6 THEN 'June' WHEN 7 THEN 'July' WHEN 8 THEN 'August'
+                     WHEN 9 THEN 'September' WHEN 10 THEN 'October' WHEN 11 THEN 'November' WHEN 12 THEN 'December'
+                   END as month_name,
+                   CAST(strftime('%w', txn_date) AS INTEGER) as day_of_week,
+                   CASE WHEN CAST(strftime('%w', txn_date) AS INTEGER) IN (0,6) THEN 1 ELSE 0 END as is_weekend
+            FROM transactions
+            UNION
+            SELECT DISTINCT entry_date as date,
+                   CAST(strftime('%Y', entry_date) AS INTEGER) as year,
+                   CAST(strftime('%m', entry_date) AS INTEGER) as month,
+                   CAST(strftime('%d', entry_date) AS INTEGER) as day,
+                   CAST((strftime('%m', entry_date)+2)/3 AS INTEGER) as quarter,
+                   CASE CAST(strftime('%m', entry_date) AS INTEGER)
+                     WHEN 1 THEN 'January' WHEN 2 THEN 'February' WHEN 3 THEN 'March' WHEN 4 THEN 'April'
+                     WHEN 5 THEN 'May' WHEN 6 THEN 'June' WHEN 7 THEN 'July' WHEN 8 THEN 'August'
+                     WHEN 9 THEN 'September' WHEN 10 THEN 'October' WHEN 11 THEN 'November' WHEN 12 THEN 'December'
+                   END as month_name,
+                   CAST(strftime('%w', entry_date) AS INTEGER) as day_of_week,
+                   CASE WHEN CAST(strftime('%w', entry_date) AS INTEGER) IN (0,6) THEN 1 ELSE 0 END as is_weekend
+            FROM journal_entries WHERE entry_date IS NOT NULL;""",
+    ]
+    for sql in views:
+        try:
+            db.execute(sql)
+        except Exception:
+            pass
+
+    # Triggers for journal balance constraint per AGENTS.md ledger-core double-entry
+    triggers = [
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_insert
+        AFTER INSERT ON journal_lines
+        FOR EACH ROW
+        BEGIN
+            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
+            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
+            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+            END;
+        END;""",
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_update
+        AFTER UPDATE ON journal_lines
+        FOR EACH ROW
+        BEGIN
+            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
+            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
+            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+            END;
+        END;""",
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_delete
+        AFTER DELETE ON journal_lines
+        FOR EACH ROW
+        BEGIN
+            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id)
+            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) >= 2
+            THEN RAISE(ABORT, 'Journal entry not balanced after delete')
+            END;
+        END;""",
+    ]
+    for sql in triggers:
+        try:
+            db.execute(sql)
+        except Exception:
+            pass
 
 def _ensure_schema(db: DbHandle):
     # Paystack cols added via ALTER like clearmind database.py:210

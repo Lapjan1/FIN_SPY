@@ -426,7 +426,54 @@ def create_report(kind: str = "excel", request: Request = None, user_id: int = D
     db.execute("INSERT INTO reports (id, tenant_id, kind, generated_by) VALUES (?,?,?,?)", (report_id, tenant_id, kind, user_id))
     append_audit_log(tenant_id, user_id, f"report.create.{kind}", "reports", report_id, {"kind": kind})
     db.commit()
+
+    # If powerbi kind, generate immediately per homework Part 5.10
+    if kind == "powerbi":
+        try:
+            from .reports import generate_powerbi_pack
+            pack = generate_powerbi_pack(tenant_id)
+            # Update report with file info
+            db.execute("UPDATE reports SET file_key=?, file_sha256=?, manifest_key=? WHERE id=?", (pack["file_key"], pack["sha256"], pack["csv_dir"], report_id))
+            db.commit()
+            return {"id": report_id, "kind": kind, "status": "ready", "file_key": pack["file_key"], "sha256": pack["sha256"], "counts": pack["counts"], "csv_dir": pack["csv_dir"]}
+        except Exception as e:
+            return {"id": report_id, "kind": kind, "status": "failed", "error": str(e)}
+
     return {"id": report_id, "kind": kind, "status": "queued"}
+
+@app.get("/v1/reports/powerbi")
+def get_powerbi_pack(user_id: int = Depends(require_login)):
+    """
+    PowerBI-ready pack: Excel file with star-schema sheets + CSVs per homework Part 5.10
+    fact_transactions, fact_journal, dim_date, dim_account, dim_category, dim_entity, dim_document as Excel + CSVs + guide
+    """
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+
+    from .reports import generate_powerbi_pack
+    pack = generate_powerbi_pack(tenant_id)
+
+    # Audit log
+    append_audit_log(tenant_id, user_id, "report.powerbi", "reports", pack["file_key"], {"counts": pack["counts"]})
+
+    return pack
+
+@app.get("/v1/reports/excel")
+def get_excel_workbook(user_id: int = Depends(require_login)):
+    """
+    Excel workbook per Appendix G: Cover, Summary, Transactions Table, Journal, Trial_Balance live SUMIFS, Private_vs_Business, Flags, Source_Register, Method_Notes, Dictionary
+    """
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+
+    from .reports import generate_excel_workbook
+    wb = generate_excel_workbook(tenant_id)
+    append_audit_log(tenant_id, user_id, "report.excel", "reports", wb["file_key"], {"sha256": wb["sha256"]})
+    return wb
 
 @app.get("/v1/reports/{report_id}")
 def get_report(report_id: str, user_id: int = Depends(require_login)):

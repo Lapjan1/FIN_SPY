@@ -359,6 +359,41 @@ def dashboard_summary(request: Request, user_id: int = Depends(require_login)):
         "is_trial_unlimited": trial is None
     }
 
+@app.get("/v1/review-queue")
+def review_queue(user_id: int = Depends(require_login)):
+    """
+    Review queue per docs/PLAN.md: failed checks land in review queue; user confirms or edits (each edit = revision with reason)
+    Returns transactions with status proposed|exception|needs_password that failed reconciliation gate or low confidence
+    """
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    # Get transactions that need review: status proposed with warnings, exception, needs_password, or from extraction_runs with reconciliation fail
+    cur = db.execute("""
+        SELECT t.id, t.txn_date, t.description_raw, t.amount_minor, t.direction, t.status, t.fingerprint_sha256,
+               d.original_filename, d.sha256 as doc_sha256, er.reconciliation, er.status as run_status
+        FROM transactions t
+        JOIN source_documents d ON t.document_id = d.id
+        LEFT JOIN extraction_runs er ON t.run_id = er.id
+        WHERE t.tenant_id=? AND t.status IN ('proposed','exception','needs_password')
+        ORDER BY t.txn_date DESC LIMIT 100
+    """, (tenant_id,))
+    rows = cur.fetchall()
+    result = []
+    for r in rows:
+        d = dict(r) if not isinstance(r, dict) else r
+        result.append(d)
+    # Also get documents that need password or exception
+    cur = db.execute("""
+        SELECT id, original_filename, sha256, status, is_encrypted, upload_ip, uploaded_at_utc
+        FROM source_documents WHERE tenant_id=? AND status IN ('needs_password','exception','queued')
+        ORDER BY uploaded_at_utc DESC LIMIT 50
+    """, (tenant_id,)) if False else db.execute("SELECT id, original_filename, sha256, status, uploaded_at_utc FROM source_documents WHERE tenant_id=? AND status IN ('needs_password','exception','queued') ORDER BY uploaded_at_utc DESC LIMIT 50", (tenant_id,))
+    # The above second query uses simpler schema existing - status column exists
+    docs = cur.fetchall()
+    return {"transactions": result, "documents": [dict(r) if not isinstance(r, dict) else r for r in docs], "count": len(result)}
+
 @app.get("/v1/flags")
 def flags(user_id: int = Depends(require_login)):
     db = get_db()

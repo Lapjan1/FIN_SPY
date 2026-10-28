@@ -71,6 +71,25 @@ class DbHandle:
                 return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT ({col_list[0]}) DO NOTHING"
         sql = re.sub(r"INSERT OR REPLACE INTO (\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)", repl_or_replace, sql, flags=re.IGNORECASE)
         sql = sql.replace("INSERT OR REPLACE", "INSERT")
+        # strftime() -> EXTRACT for dim_date (cols are TEXT 'YYYY-MM-DD').
+        # DOW matches sqlite %w exactly (0=Sunday..6=Saturday).
+        sql = re.sub(
+            r"CAST\(strftime\('%Y',\s*(\w+)\) AS INTEGER\)",
+            r"EXTRACT(YEAR FROM \1::date)::INTEGER", sql)
+        sql = re.sub(
+            r"CAST\(strftime\('%m',\s*(\w+)\) AS INTEGER\)",
+            r"EXTRACT(MONTH FROM \1::date)::INTEGER", sql)
+        sql = re.sub(
+            r"CAST\(strftime\('%d',\s*(\w+)\) AS INTEGER\)",
+            r"EXTRACT(DAY FROM \1::date)::INTEGER", sql)
+        sql = re.sub(
+            r"CAST\(strftime\('%w',\s*(\w+)\) AS INTEGER\)",
+            r"EXTRACT(DOW FROM \1::date)::INTEGER", sql)
+        sql = re.sub(
+            r"CAST\(\(strftime\('%m',\s*(\w+)\)\+2\)/3 AS INTEGER\)",
+            r"EXTRACT(QUARTER FROM \1::date)::INTEGER", sql)
+        sql = sql.replace(
+            "CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW")
         return sql
 
     def execute(self, sql: str, params: tuple = ()):
@@ -87,11 +106,23 @@ class DbHandle:
 
     def executescript(self, sql: str):
         if self.backend == "pg":
-            # Split by ; like clearmind
+            # Split by ; like clearmind. Trigger DDL is sqlite-only: pg skips
+            # it (app-level post_transaction validation covers pg instead).
+            # Each statement runs independently with loud warnings so one bad
+            # view/trigger can never take down boot again (Oct28 crash).
             stmts = [s.strip() for s in re.split(r';\s*\n', sql.strip()) if s.strip()]
             for stmt in stmts:
-                if stmt:
+                if not stmt:
+                    continue
+                if re.search(r"\b(CREATE|DROP)\s+TRIGGER\b", stmt, re.I):
+                    continue
+                try:
                     self.execute(stmt + ";")
+                except Exception as e:
+                    print(
+                        f"WARN: pg schema statement failed, continuing:"
+                        f" {stmt[:100]!r} -> {e}"
+                    )
         else:
             self.conn.executescript(sql)
 
@@ -328,6 +359,7 @@ def init_db():
         transaction_id TEXT,
         classification_id TEXT,
         created_by INTEGER,
+        posted INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -531,7 +563,7 @@ def init_db():
     CREATE VIEW IF NOT EXISTS dim_entity AS
         SELECT id, name, plan_code, status FROM tenants
         UNION
-        SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL);
+        SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL) AS sub;
 
     CREATE VIEW IF NOT EXISTS dim_document AS
         SELECT id, tenant_id, sha256, original_filename, size_bytes, mime, uploaded_at_utc, status, legal_hold FROM source_documents;
@@ -565,35 +597,53 @@ def init_db():
                CASE WHEN CAST(strftime('%w', entry_date) AS INTEGER) IN (0,6) THEN 1 ELSE 0 END as is_weekend
         FROM journal_entries WHERE entry_date IS NOT NULL;
 
-    -- Journal balance constraint: debits = credits per entry (double-entry accounting) per AGENTS.md ledger-core
-    -- Trigger checks after insert/update/delete of journal_lines, allows single line intermediate state but checks when count >=2
-    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_insert
+    -- Journal balance constraint: debits = credits per POSTED entry (double-entry) per AGENTS.md ledger-core
+    -- Day4 fix: old count>=2 prefix check made legal 3-line mixed splits impossible (any 2-line
+    -- prefix of Dr+Dr/Cr is unbalanced). New mechanism: draft lines freely while posted=0,
+    -- balance enforced when posting (UPDATE posted=1) and lines of posted entries stay guarded.
+    DROP TRIGGER IF EXISTS trg_journal_balance_check_insert;
+    DROP TRIGGER IF EXISTS trg_journal_balance_check_update;
+    DROP TRIGGER IF EXISTS trg_journal_balance_check_delete;
+    CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_insert
     AFTER INSERT ON journal_lines
     FOR EACH ROW
+    WHEN (SELECT posted FROM journal_entries WHERE id=NEW.entry_id) = 1
     BEGIN
-        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
-        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
-        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits per double-entry accounting')
+        SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id)
+        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits (posted entry)')
         END;
     END;
 
-    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_update
+    CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_update
     AFTER UPDATE ON journal_lines
     FOR EACH ROW
+    WHEN (SELECT posted FROM journal_entries WHERE id=NEW.entry_id) = 1
     BEGIN
-        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
-        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
-        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+        SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id)
+        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits (posted entry)')
         END;
     END;
 
-    CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_delete
+    CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_delete
     AFTER DELETE ON journal_lines
     FOR EACH ROW
+    WHEN (SELECT posted FROM journal_entries WHERE id=OLD.entry_id) = 1
     BEGIN
-        SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id)
-        AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) >= 2
-        THEN RAISE(ABORT, 'Journal entry not balanced after delete')
+        SELECT CASE WHEN (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) > 0
+        THEN RAISE(ABORT, 'Journal entry not balanced after delete: cannot remove lines from a posted entry (unpost first)')
+        END;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_journal_entry_post
+    AFTER UPDATE OF posted ON journal_entries
+    FOR EACH ROW
+    WHEN NEW.posted = 1
+    BEGIN
+        SELECT CASE WHEN (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.id) < 2
+        THEN RAISE(ABORT, 'Journal entry not balanced: need at least 2 lines to post')
+        END;
+        SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.id)
+        THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits per double-entry accounting')
         END;
     END;
 
@@ -604,6 +654,28 @@ def init_db():
     _ensure_indexes(db)
     db.commit()
 
+def _ensure_dedup_index(db: DbHandle):
+    """Enforce one-txn-per-account on old files (fresh files get inline UNIQUE).
+
+    The fingerprint index was created non-unique, so DROP + UNIQUE replaces it
+    on sqlite and pg. Fails loud-but-safe when dupes exist: enforcement stays
+    off, data untouched.
+    """
+    for sql in [
+        "DROP INDEX IF EXISTS idx_transactions_tenant_account_fingerprint;",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_tenant_account_fingerprint"
+        " ON transactions(tenant_id, account_number, fingerprint_sha256);",
+    ]:
+        try:
+            db.execute(sql)
+        except Exception as e:
+            print(
+                "WARN: dedup unique-index migration failed"
+                f" ({e}); find dupes via GROUP BY tenant_id, account_number,"
+                " fingerprint_sha256 HAVING COUNT(*)>1"
+            )
+
+
 def _ensure_indexes(db: DbHandle):
     # Indexes for performance per homework Done Means: 1000 tx analyze <5s without LLM, <15s with LLM, PowerBI export
     indexes = [
@@ -613,7 +685,6 @@ def _ensure_indexes(db: DbHandle):
         "CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_account_number ON transactions(account_number);",
-        "CREATE INDEX IF NOT EXISTS idx_transactions_tenant_account_fingerprint ON transactions(tenant_id, account_number, fingerprint_sha256);",
         "CREATE INDEX IF NOT EXISTS idx_source_documents_tenant_sha ON source_documents(tenant_id, sha256);",
         "CREATE INDEX IF NOT EXISTS idx_source_documents_uploaded_by ON source_documents(uploaded_by);",
         "CREATE INDEX IF NOT EXISTS idx_source_documents_account ON source_documents(account_id);",
@@ -643,6 +714,8 @@ def _ensure_indexes(db: DbHandle):
             db.execute(sql)
         except Exception:
             pass
+
+    _ensure_dedup_index(db)
 
     # Views for PowerBI star-schema per homework Part 5.10 - need to drop and recreate to include account_number per user per merchant per account enhancement
     # Drop existing views if old definition without account_number
@@ -686,7 +759,7 @@ def _ensure_indexes(db: DbHandle):
             UNION SELECT DISTINCT '6000' as id, 'Marketing' as name UNION SELECT '6100','Rent' UNION SELECT '6200','Fuel' UNION SELECT '6600','Bank Charges' UNION SELECT '7000','Drawings';""",
         """CREATE VIEW IF NOT EXISTS dim_entity AS
             SELECT id, name, plan_code, status FROM tenants
-            UNION SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL);""",
+            UNION SELECT entity_id as id, entity_id as name, '' as plan_code, 'active' as status FROM (SELECT DISTINCT entity_id as entity_id FROM transactions WHERE entity_id IS NOT NULL) AS sub;""",
         """CREATE VIEW IF NOT EXISTS dim_document AS
             SELECT id, tenant_id, sha256, original_filename, size_bytes, mime, uploaded_at_utc, status, legal_hold FROM source_documents;""",
         """CREATE VIEW IF NOT EXISTS dim_date AS
@@ -725,32 +798,49 @@ def _ensure_indexes(db: DbHandle):
             pass
 
     # Triggers for journal balance constraint per AGENTS.md ledger-core double-entry
+    # Day4: enforce on POSTED entries (see schema block above). SQLite syntax; on pg these
+    # statements fail and are skipped - pg relies on app-level post_transaction validation.
     triggers = [
-        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_insert
+        "DROP TRIGGER IF EXISTS trg_journal_balance_check_insert;",
+        "DROP TRIGGER IF EXISTS trg_journal_balance_check_update;",
+        "DROP TRIGGER IF EXISTS trg_journal_balance_check_delete;",
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_insert
         AFTER INSERT ON journal_lines
         FOR EACH ROW
+        WHEN (SELECT posted FROM journal_entries WHERE id=NEW.entry_id) = 1
         BEGIN
-            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
-            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
-            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+            SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id)
+            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits (posted entry)')
             END;
         END;""",
-        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_update
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_update
         AFTER UPDATE ON journal_lines
         FOR EACH ROW
+        WHEN (SELECT posted FROM journal_entries WHERE id=NEW.entry_id) = 1
         BEGIN
-            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=NEW.entry_id)
-            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.entry_id) >= 2
-            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits')
+            SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.entry_id)
+            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits (posted entry)')
             END;
         END;""",
-        """CREATE TRIGGER IF NOT EXISTS trg_journal_balance_check_delete
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_lines_guard_delete
         AFTER DELETE ON journal_lines
         FOR EACH ROW
+        WHEN (SELECT posted FROM journal_entries WHERE id=OLD.entry_id) = 1
         BEGIN
-            SELECT CASE WHEN (SELECT SUM(debit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id) != (SELECT SUM(credit_minor) FROM journal_lines WHERE entry_id=OLD.entry_id)
-            AND (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) >= 2
-            THEN RAISE(ABORT, 'Journal entry not balanced after delete')
+            SELECT CASE WHEN (SELECT COUNT(*) FROM journal_lines WHERE entry_id=OLD.entry_id) > 0
+            THEN RAISE(ABORT, 'Journal entry not balanced after delete: cannot remove lines from a posted entry (unpost first)')
+            END;
+        END;""",
+        """CREATE TRIGGER IF NOT EXISTS trg_journal_entry_post
+        AFTER UPDATE OF posted ON journal_entries
+        FOR EACH ROW
+        WHEN NEW.posted = 1
+        BEGIN
+            SELECT CASE WHEN (SELECT COUNT(*) FROM journal_lines WHERE entry_id=NEW.id) < 2
+            THEN RAISE(ABORT, 'Journal entry not balanced: need at least 2 lines to post')
+            END;
+            SELECT CASE WHEN (SELECT COALESCE(SUM(debit_minor),0) FROM journal_lines WHERE entry_id=NEW.id) != (SELECT COALESCE(SUM(credit_minor),0) FROM journal_lines WHERE entry_id=NEW.id)
+            THEN RAISE(ABORT, 'Journal entry not balanced: debits != credits per double-entry accounting')
             END;
         END;""",
     ]
@@ -759,6 +849,28 @@ def _ensure_indexes(db: DbHandle):
             db.execute(sql)
         except Exception:
             pass
+
+
+def _cleanup_journals(db: DbHandle, tenant_id: str):
+    """Unpost + delete journal lines/entries for tenant (delete guard blocks posted lines)."""
+    try:
+        db.execute(
+            "UPDATE journal_entries SET posted=0 WHERE tenant_id=?", (tenant_id,)
+        )
+    except Exception:
+        pass
+    try:
+        db.execute(
+            "DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=?)",
+            (tenant_id,),
+        )
+    except Exception:
+        pass
+    try:
+        db.execute("DELETE FROM journal_entries WHERE tenant_id=?", (tenant_id,))
+    except Exception:
+        pass
+
 
 def cleanup_tenant(tenant_id: str):
     """Delete tenant data in FK-safe order: children first, parents last.
@@ -788,14 +900,7 @@ def cleanup_tenant(tenant_id: str):
     except Exception:
         pass
     # Journals: lines reference entries and accounts, entries reference tenant
-    try:
-        db.execute("DELETE FROM journal_lines WHERE entry_id IN (SELECT id FROM journal_entries WHERE tenant_id=?)", (tenant_id,))
-    except Exception:
-        pass
-    try:
-        db.execute("DELETE FROM journal_entries WHERE tenant_id=?", (tenant_id,))
-    except Exception:
-        pass
+    _cleanup_journals(db, tenant_id)
     for tbl in ["transactions", "merchant_memory", "vendor_rules", "source_spans"]:
         try:
             db.execute(f"DELETE FROM {tbl} WHERE tenant_id=?", (tenant_id,))
@@ -866,6 +971,7 @@ def _ensure_schema(db: DbHandle):
         ("source_documents", "branch_code", "TEXT"),
         ("transactions", "account_id", "TEXT"),
         ("transactions", "account_number", "TEXT"),
+        ("journal_entries", "posted", "INTEGER DEFAULT 0"),
     ]
     for table, col, typ in cols_to_add:
         try:

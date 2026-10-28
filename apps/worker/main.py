@@ -45,7 +45,7 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
             # Try vault path
             pdf_path = VAULT_PATH / f"{sha256}.pdf"
 
-        result = extract_document(pdf_path, bank_hint="FNB", password=password)
+        result = extract_document(pdf_path, bank_hint="FNB", password=password, tenant_id=tenant_id)
 
         # Reconciliation gate per AGENTS.md + docs/FLOWS.md + apps/worker/reconcile.py
         # Opening + sum = closing, running balance monotonic, duplicate fingerprints

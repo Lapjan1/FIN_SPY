@@ -127,6 +127,16 @@ class DebtPlanRequest(BaseModel):
     method: str = Field(..., pattern="^(snowball|avalanche)$")
     extra_cash_per_month_minor: int = 0
 
+class ImageGenIn(BaseModel):
+    prompt: str
+    size: str = "1024x1024"
+    model: str | None = None
+
+class SegmentIn(BaseModel):
+    image_b64: str
+    points: list | None = None
+    boxes: list | None = None
+
 class ChatRequest(BaseModel):
     messages: List[dict]
     tenant_id: str = "default-tenant"
@@ -666,6 +676,28 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
     append_audit_log(tenant_id, user_id, "report.powerbi", "reports", pack["file_key"], {"counts": pack["counts"]})
 
     return pack
+
+@app.post("/v1/images/generate")
+def images_generate(req: ImageGenIn, user_id: int = Depends(require_login)):
+    """Explicit text-to-image (Wonder). 422 unless an image provider is configured."""
+    from apps.worker.llm.image import generate_image
+    try:
+        return generate_image(req.prompt, size=req.size, model=req.model)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Image provider failed: {e}")
+
+@app.post("/v1/images/segment")
+def images_segment(req: SegmentIn, user_id: int = Depends(require_login)):
+    """SAM segmentation via configured self-hosted service. 422 unless configured."""
+    from apps.worker.llm.image import segment_image
+    try:
+        return segment_image(req.image_b64, points=req.points, boxes=req.boxes)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"SAM service failed: {e}")
 
 @app.get("/v1/reports/evidence-pack")
 def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login)):

@@ -227,7 +227,7 @@ def _reachable(base_url: str, timeout_s: float = 1.0) -> bool:
         return False
 
 
-def _live_model_answer(question: str, facts: Dict[str, Any]):
+def _live_model_answer(question: str, facts: Dict[str, Any], tenant_id: str = "default"):
     """Ask a local model to rephrase deterministic facts. Returns None when
     no model is reachable (mock responses never surface as answers)."""
     from apps.worker.llm.client import MetaClient
@@ -242,7 +242,7 @@ def _live_model_answer(question: str, facts: Dict[str, Any]):
                 continue
             res = client.complete(
                 [{"role": "system", "content": "Forensic bookkeeping assistant. Answer only from supplied facts."},
-                 {"role": "user", "content": prompt}], effort="low")
+                 {"role": "user", "content": prompt}], effort="low", tenant_id=tenant_id)
             if _is_mock(res):
                 continue
             if res.tool_calls:
@@ -266,7 +266,7 @@ def chat_answer(tenant_id: str, question: str) -> Dict[str, Any]:
     facts_payload = {c["tool"]: c["result"] for c in facts["tool_calls"]}
     if not facts_payload:
         facts_payload = {"flags": [f.get("test_id") for f in flags[:8]]}
-    live = _live_model_answer(question, facts_payload)
+    live = _live_model_answer(question, facts_payload, tenant_id)
     if live is None:
         return {**facts, "model": "deterministic (no local model reachable)"}
     if live["content"]:
@@ -284,7 +284,7 @@ def chat_answer(tenant_id: str, question: str) -> Dict[str, Any]:
     if not executed:
         return {**facts, "model": live["model_id"]}
     second = _live_model_answer(
-        question, {e["tool"]: e["result"] for e in executed})
+        question, {e["tool"]: e["result"] for e in executed}, tenant_id)
     if second and second["content"]:
         return {"answer": second["content"], "tool_calls": executed,
                 "citations": facts["citations"], "model": live["model_id"]}

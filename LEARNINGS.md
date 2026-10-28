@@ -211,3 +211,21 @@ Symptom: /v1/auth/forgot returned the reset token openly (clearmind leak pattern
 Cause: No boundary between dev convenience and prod secrecy.
 Fix: token returned only when no email key is configured; with a key it is emailed and the response carries sent:true only; red test pins the keyless dev path so the suite still covers reset.
 Applies when: Any secret-bearing response - gate on the production capability, not on ENV flags.
+
+## 2026-10-28-37 Bare except plus permissive assert masks NameError
+Symptom: suite green for days while apps/worker/main.py:48 passed undefined `tenant` - NameError on every real worker extraction.
+Cause: bare `except Exception` returned ("exception", None) and the e2e test asserted `status in (...)` with `if result:` guard - the failure path was indistinguishable from a legit exception.
+Fix: one-char-class fix to tenant_id; ruff F821 now gated (was the single F821 in the 175-finding baseline); e2e/drill tests re-run green with real extraction rows.
+Applies when: Any pipeline with a failure status - assert the success path produces rows at least once, and gate F821 in CI.
+
+## 2026-10-28-38 Image and LLM clients consult configured() before network
+Symptom: Day-8 image tests hit real 127.0.0.1:3001 connection-refused despite monkeypatched env.
+Cause: _image_client built the client from defaults without checking image_configured() - implicit localhost fallback reached the network with no key.
+Fix: _image_client raises 422-style ValueError unless explicitly configured; tests pin the 422 path; zero live calls, zero credit.
+Applies when: Any billable/network client - fail closed on missing config, never default to a live endpoint.
+
+## 2026-10-28-39 Pyright raise of Optional needs an assert
+Symptom: pyright reportGeneralTypeIssues on `raise last` after a retry loop (None does not derive from BaseException).
+Cause: flow analysis cannot prove the loop body assigned the variable - pragma comments do not narrow types.
+Fix: `assert last is not None` before raise; 0 errors on new modules.
+Applies when: Any raise-after-loop - assert the invariant instead of commenting it.

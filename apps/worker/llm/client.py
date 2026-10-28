@@ -55,7 +55,7 @@ class MetaClient:
         # Keys only in env, never in code per AGENTS.md
         self.api_key_env_var = os.getenv("META_API_KEY") if provider=="meta_official" else os.getenv("FREELLMAPI_API_KEY") if provider=="freellmapi" else os.getenv("OLLAMA_API_KEY")
 
-    def complete(self, messages: List[Dict], tools: Optional[List]=None, response_schema: Optional[Dict]=None, effort: str="medium", stream: bool=False) -> ModelResult:
+    def complete(self, messages: List[Dict], tools: Optional[List]=None, response_schema: Optional[Dict]=None, effort: str="medium", stream: bool=False, tenant_id: str = "default") -> ModelResult:
         """
         Complete with validation against Capabilities.effort_levels, front-loaded system prompt.
         Rules+goal at START per Meta prompting guide.
@@ -94,7 +94,14 @@ class MetaClient:
             # Effort mapping: for Spark, use reasoning_effort header? For now pass via extra param if supported
             # Meta provider uses effort in extra_body? For scaffold, ignore
 
-            resp = client.chat.completions.create(**kwargs)
+            from .ratelimit import get_limiter, with_retries, MAX_WAIT_S
+            import time as _time
+            wait = get_limiter().acquire(tenant_id)
+            if wait > MAX_WAIT_S:
+                return ModelResult(content='{"statement":{"currency":"ZAR","opening_balance":null,"closing_balance":null},"rows":[],"unaccounted_lines":[],"warnings":["rate limited, deterministic fallback"]}', model_id=self.model_id, usage={"prompt_tokens": 0, "completion_tokens": 0, "error": "rate_limited", "wait_s": round(wait, 1)})
+            if wait > 0:
+                _time.sleep(min(wait, MAX_WAIT_S))
+            resp = with_retries(lambda: client.chat.completions.create(**kwargs))
             choice = resp.choices[0]
             content = choice.message.content or ""
             tool_calls = []

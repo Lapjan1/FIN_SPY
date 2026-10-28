@@ -145,7 +145,7 @@ def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[E
 
     return None
 
-def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1") -> ExtractionResult:
+def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1", tenant_id: str = "default") -> ExtractionResult:
     """
     LLM fallback with line-ID grounding per prompts/extract_sa_bank_v1.md
     Front-loaded rules, untrusted page data delimited, schema enforced, refusal/unknown allowed, no tools
@@ -183,7 +183,7 @@ def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1") -> Extract
     ]
 
     try:
-        result = client.complete(messages, response_schema=schema, effort="medium")
+        result = client.complete(messages, response_schema=schema, effort="medium", tenant_id=tenant_id)
         content = result.content
         # Try parse JSON
         # Content may have markdown code block ```json ... ```
@@ -279,7 +279,7 @@ def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1") -> Extract
             closing_balance_minor=None
         )
 
-def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[str] = None) -> ExtractionResult:
+def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[str] = None, tenant_id: str = "default") -> ExtractionResult:
     """
     Main entry: intake -> text+bbox -> deterministic -> LLM fallback -> validate -> persist
     DB-first: result should be persisted to source_spans/transactions before returning
@@ -290,7 +290,7 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     result = deterministic_parse(pages, bank_hint)
     if result is None:
         # LLM fallback
-        result = llm_fallback(pages, model_id="muse-spark-1.1")
+        result = llm_fallback(pages, model_id="muse-spark-1.1", tenant_id=tenant_id)
 
     # Validation per AGENTS.md: schema, line IDs exist, quote exists, page coverage, reconciliation gate
     # Schema validation

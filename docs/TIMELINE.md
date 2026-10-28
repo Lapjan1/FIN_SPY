@@ -28,12 +28,13 @@ Based on homework Part 8 + previous agent plan + Clearmind pattern.
 - Spy engine subscriptions duplicates F-010 fee Benford F-020 leak score R/mo, KPIs runway burn savings debt-to-income, debt module snowball vs avalanche Decimal what-if
 - Validate R45k/R20k/R10k debt fixture ordering
 
-## Day 6 - Oct 31 - Dashboard + Drill + Chat + Settings UI for Meta Models
-- Next.js screens per `docs/UI_SPEC.md` KPI cards waterfall treemap heatmap subscription radar, ECharts cross-filter, drill transaction -> grid -> pdf.js bbox highlight via `/v1/transactions/{id}/sources`, Spark tool-calling chat over DB
-- Settings UI for Meta models per competition rules: admin-only keys ***REDACTED***+last4, user-visible read-only model/effort/cost, pure Meta no openai phi4 ollama-local only privacy fallback, freellmapi active badge green + meta pending warning yellow, cost guards per-tenant pages 20/200/1000 global daily budget 10 kill_switch No-AI, docs/SETTINGS.md
+## Day 6 - Oct 31 - Dashboard + Drill + Chat + Settings UI for Meta Models - DONE 2026-10-28 (see docs/RECAP_DAY6.md)
+- [x] Next.js screens per `docs/UI_SPEC.md` KPI cards waterfall treemap heatmap subscription radar (/dashboard), drill transaction -> grid -> pdf.js bbox highlight via `/v1/transactions/{id}/sources` (/transactions + SourceViewer react-pdf), tool-calling chat over DB (/chat + POST /v1/chat); [ ] ECharts cross-filter click-to-drill only remainder (stretch)
+- [x] Settings UI for Meta models per competition rules: admin-only keys ***REDACTED***+last4, user-visible read-only model/effort/cost, pure Meta no openai phi4 ollama-local only privacy fallback, freellmapi active badge green + meta pending warning yellow, cost guards per-tenant pages 20/200/1000 global daily budget 10 kill_switch No-AI, docs/SETTINGS.md
+- [x] Bonus: /upload + /inbox pages; worker gate-key outage fixed; real spans/dims persisted; vault file endpoint
 
-## Day 7 - Nov 1 - Exports + Billing + Email Service Implementation
-- Excel live SUMIFS trial balance + star-schema, signed PAdES PDF + RFC3161 TSA pyHanko, Evidence Pack ZIP + `scripts/verify_pack.py`
+## Day 7 - Nov 1 - Exports + Billing + Email Service Implementation - IN PROGRESS (status 2026-10-28)
+- [ ] Excel live SUMIFS trial balance + star-schema (have 4 sheets, Appendix G needs 10) [ ] signed PAdES PDF + RFC3161 TSA pyHanko (verify notes only) [~] Evidence Pack ZIP (verifier done, manifest builder + ZIP missing - STARTING HERE) [x] `scripts/verify_pack.py` [x] Paystack billing (HMAC, verify, webhook) [ ] Email service implementation (impl exists, unwired, untested)
 - **Paystack test-mode billing + Email Service Implementation:**
   - Paystack initialize transaction from backend never expose secret key in frontend per `accept-payments` docs, callback_url test/live separate, verify via webhook or verify endpoint data.status + data.amount, webhook must be publicly available localhost can't receive events per go-live checklist, signature HMAC SHA512 raw body x-paystack-signature, IP whitelist
   - Email service Resend free tier: `POST https://api.resend.com/emails` with `EMAIL_API_KEY` env, from `noreply@fin-spy.example`, to user email, subject welcome/reset/payment_failed, body with reset link `APP_BASE_URL/reset?token=...` or `https://finspy-production.up.railway.app/reset?token=...`
@@ -79,7 +80,10 @@ Verdict scale: DONE = implemented + tested + critic-survived. PARTIAL = real cor
 - Day4 DONE (code) - ledger/classify/review/9999/repost/reverify (ledger.py:250/380/584/681/773/890, classify.py:197/317, audit.py:94/143); suite 130 passed; 45 files uncommitted, no Day4-titled commit yet.
 - Day5 DONE 2026-10-28 - detectors real (SUB/DUP/NDUP/F-010/F-030/BEN/F-020), Decimal amortization + what-if, leak wired to KPIs, POST /v1/spy/run + debt/plan live, tenant-lookup bugfix on 4 endpoints, 11 tests, suite 141/141 (see docs/RECAP_DAY5.md).
 - Day6 PART 1 DONE 2026-10-28 - worker gate-key outage FIXED (every upload hit exception before), real spans+bbox+dims persisted, sources+dims+doc info, vault file endpoint, /dashboard (live KPIs+ECharts+flags) + /transactions drill (grid->sources->react-pdf overlay), tsc+build green, suite 145/141+4.
-- Day6 PART 2 DONE 2026-10-28 - real chat over DB (6 tools, tenant-guarded, deterministic + local-model rephrase, never invents), /upload + /inbox + /chat pages, 4 chat tests, ruff clean, suite 149/145+4, tsc+build green. LEFT Day6: waterfall/treemap/radar charts.
+- Day6 PART 2 DONE 2026-10-28 - real chat over DB (6 tools, tenant-guarded, deterministic + local-model rephrase, never invents), /upload + /inbox + /chat pages, 4 chat tests, ruff clean, suite 149/145+4, tsc+build green.
+- Day6 PART 3 DONE 2026-10-28 - extra charts on /dashboard: flow waterfall (in/out/net), vendor treemap (top 12 outflow), heatmap, subscription radar from SUB flags (top 6 R/mo). All real data + empty states, tsc+build green.
+- Day6 CLEANUP DONE - RECAP_DAY6 + LEARN 31/32/33, checklist checked, Day6 CLOSED except ECharts cross-filter stretch.
+- Day7 STATUS - billing DONE; excel 4/10, PAdES/TSA missing, pack generation missing (starting), email unwired. See Day7 section.
 - Day7 PARTIAL - powerbi reports.py:18 + auditor-csv :146 + billing HMAC :84 DONE; excel 4/10 sheets (need Appendix G 10); pack GENERATION missing (no manifest/zip builder); PAdES/TSA issue-side missing (verify_pack.py:73-78 notes only, zero pyHanko hits repo-wide).
 - Day8 TODO - Wonder/Image/SAM absent; 100RPM limiter absent; uptime.yml cron commented (manual only), ci.yml done; ruff red pre-existing (11 verified on untouched tree), pyright/tsc clean, pnpm lint unusable pre-existing.
 - Day9 PARTIAL - railway.json/nixpacks.toml/Procfile venv path done; deploy 77fef8ea SUCCESS 2026-10-28 08:56 SAST, /health 200 backend pg + /health/ready ready:true + Day4 routes 401-guarded, all verified live; web NO public domain; video MISSING; legal pages exist (privacy/terms/refund) but need live domain for Paystack reviewer.

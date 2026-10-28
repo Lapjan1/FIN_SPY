@@ -65,6 +65,104 @@ export default function DashboardPage() {
       ...Object.keys(data.totals.monthly_outflow),
     ])).sort()
     : [];
+  const inflowR = (data?.inflow_minor || 0) / 100;
+  const outflowR = (data?.outflow_minor || 0) / 100;
+  const netR = (data?.net_flow_minor || 0) / 100;
+  const waterfallOption = {
+    backgroundColor: 'transparent',
+    textStyle: { color: '#94a3b8' },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    xAxis: { type: 'category', data: ['Inflow', 'Outflow', 'Net'] },
+    yAxis: { type: 'value' },
+    series: [
+      {
+        name: 'assist', type: 'bar', stack: 'total',
+        itemStyle: { borderColor: 'transparent', color: 'transparent' },
+        emphasis: { itemStyle: { borderColor: 'transparent', color: 'transparent' } },
+        data: [0, netR, 0],
+      },
+      {
+        name: 'flow', type: 'bar', stack: 'total',
+        data: [
+          { value: inflowR, itemStyle: { color: '#22c55e' } },
+          { value: outflowR, itemStyle: { color: '#f43f5e' } },
+          { value: netR, itemStyle: { color: '#3b82f6' } },
+        ],
+      },
+    ],
+  };
+
+  const treemapData = data?.totals
+    ? Object.entries(data.totals.vendor_counts)
+      .map(([name, minor]) => ({ name, value: Math.round((minor / 100) * 100) / 100 }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 12)
+    : [];
+  const treemapOption = {
+    backgroundColor: 'transparent',
+    textStyle: { color: '#e2e8f0' },
+    tooltip: { formatter: (p: { name: string; value: number }) => `${p.name}: R${p.value}` },
+    series: [{ type: 'treemap', data: treemapData, label: { color: '#e2e8f0' } }],
+  };
+
+  const radarSubs = flags
+    .filter((f) => f.test_id === 'SUB')
+    .map((f) => {
+      try {
+        return JSON.parse(f.result_json || '{}') as { merchant?: string; monthly_cost_minor?: number };
+      } catch {
+        return {};
+      }
+    })
+    .filter((s): s is { merchant: string; monthly_cost_minor: number } =>
+      typeof s.merchant === 'string' && typeof s.monthly_cost_minor === 'number')
+    .sort((a, b) => b.monthly_cost_minor - a.monthly_cost_minor)
+    .slice(0, 6);
+  const radarMerchants = radarSubs.map((s) => s.merchant);
+  const radarMax = Math.max(...radarSubs.map((s) => s.monthly_cost_minor / 100), 1);
+  const radarOption = {
+    backgroundColor: 'transparent',
+    textStyle: { color: '#94a3b8' },
+    tooltip: {},
+    radar: {
+      indicator: radarMerchants.map((m) => ({ name: m, max: radarMax })),
+      axisName: { color: '#94a3b8' },
+    },
+    series: [{
+      type: 'radar',
+      data: [{ value: radarSubs.map((s) => s.monthly_cost_minor / 100), name: 'R/mo',
+        itemStyle: { color: '#f43f5e' }, areaStyle: { opacity: 0.25 } }],
+    }],
+  };
+
+  const heatRows = ['Inflow', 'Outflow', 'Net'];
+  const heatData: Array<[number, number, number]> = [];
+  months.forEach((m, xi) => {
+    const inflow = (data?.totals?.monthly_inflow[m] || 0) / 100;
+    const outflow = (data?.totals?.monthly_outflow[m] || 0) / 100;
+    heatData.push([xi, 0, Math.round(inflow * 100) / 100]);
+    heatData.push([xi, 1, Math.round(outflow * 100) / 100]);
+    heatData.push([xi, 2, Math.round((inflow - outflow) * 100) / 100]);
+  });
+  const heatMax = Math.max(1, ...heatData.map((d) => Math.abs(d[2])));
+  const heatmapOption = {
+    backgroundColor: 'transparent',
+    textStyle: { color: '#94a3b8' },
+    tooltip: {
+      formatter: (p: { value: [number, number, number] }) =>
+        `${months[p.value[0]]} ${heatRows[p.value[1]]}: R${p.value[2]}`,
+    },
+    grid: { height: '50%', top: '10%' },
+    xAxis: { type: 'category', data: months, splitArea: { show: true } },
+    yAxis: { type: 'category', data: heatRows, splitArea: { show: true } },
+    visualMap: {
+      min: -heatMax, max: heatMax, calculable: true, orient: 'horizontal',
+      left: 'center', bottom: '0%', inRange: { color: ['#f43f5e', '#1e293b', '#22c55e'] },
+      textStyle: { color: '#94a3b8' },
+    },
+    series: [{ type: 'heatmap', data: heatData, label: { show: false } }],
+  };
+
   const chartOption = {
     backgroundColor: 'transparent',
     textStyle: { color: '#94a3b8' },
@@ -131,6 +229,39 @@ export default function DashboardPage() {
               <p className="text-sm text-slate-400">No monthly data yet - upload a statement first.</p>
             ) : (
               <ReactECharts option={chartOption} style={{ height: 280 }} />
+            )}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="border border-slate-800 rounded p-4">
+              <h2 className="font-semibold text-sm mb-2">Flow waterfall (R)</h2>
+              <ReactECharts option={waterfallOption} style={{ height: 260 }} />
+            </div>
+            <div className="border border-slate-800 rounded p-4">
+              <h2 className="font-semibold text-sm mb-2">Outflow by vendor</h2>
+              {treemapData.length === 0 ? (
+                <p className="text-sm text-slate-400">No vendor data yet.</p>
+              ) : (
+                <ReactECharts option={treemapOption} style={{ height: 260 }} />
+              )}
+            </div>
+          </div>
+
+          <div className="border border-slate-800 rounded p-4">
+            <h2 className="font-semibold text-sm mb-2">Monthly intensity (R)</h2>
+            {months.length === 0 ? (
+              <p className="text-sm text-slate-400">No monthly data yet.</p>
+            ) : (
+              <ReactECharts option={heatmapOption} style={{ height: 220 }} />
+            )}
+          </div>
+
+          <div className="border border-slate-800 rounded p-4">
+            <h2 className="font-semibold text-sm mb-2">Subscription radar (R/mo)</h2>
+            {radarMerchants.length === 0 ? (
+              <p className="text-sm text-slate-400">No subscriptions detected - press Run spy to scan.</p>
+            ) : (
+              <ReactECharts option={radarOption} style={{ height: 300 }} />
             )}
           </div>
 

@@ -181,3 +181,15 @@ Symptom: process_one_document returned (exception, None) on EVERY document - zer
 Cause: reconcile.py returns opening_closing_top_bottom/... keys but worker/main.py read gate[opening_closing]/gate[running_balance] (stale names from scaffold). Broad except converted KeyError to (exception, None); e2e masked it with if result:.
 Fix: worker reads the four real gate keys; drill tests assert result non-None unconditionally; PRAGMA busy_timeout=5000 for threaded TestClient flakes.
 Applies when: Any pipeline with catch-all + optional-result tests - e2e MUST assert the happy path ran, never if result:. Verify with audit_log extraction.fail counts.
+
+## 2026-10-28-32 Tenant lookup collapsed all sqlite users into one
+Symptom: spy/run stored flags under the real tenant but GET /v1/flags returned [] - reads used default-tenant.
+Cause: 15 endpoints used row[tenant_id] if isinstance(row, dict) else default-tenant; sqlite returns Row (never dict), so every tenant read as default-tenant. Writes used row[0] correctly - split-brain.
+Fix: single _tenant_of(user_id) helper handling Row + dict; scripted repo-wide swap with asserted counts (13+1+1+2), grep proves zero else-default stragglers; full suite green.
+Applies when: Any dual-backend row access - never branch tenant identity on isinstance; one helper, sweep to prove.
+
+## 2026-10-28-33 Chat must be tools-first with mock detection
+Symptom: /v1/chat returned a hardcoded mock string; naive LLM wiring would burn credit or hallucinate numbers.
+Cause: No grounding boundary between model output and ledger facts.
+Fix: chat.py runs deterministic DB tools first and templates the answer; a local model may only rephrase supplied facts; mock responses (no-key content or usage.error) are detected and skipped; 1s TCP pre-check avoids 16s SDK retry waits; hosted providers never attempted - zero credit.
+Applies when: Any assistant over authoritative data - tools compute, model phrases, mocks never surface.

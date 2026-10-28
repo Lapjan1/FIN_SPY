@@ -652,16 +652,37 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
 
     return pack
 
-@app.get("/v1/reports/excel")
-def get_excel_workbook(user_id: int = Depends(require_login)):
+@app.get("/v1/reports/evidence-pack")
+def get_evidence_pack(user_id: int = Depends(require_login)):
     """
-    Excel workbook per Appendix G: Cover, Summary, Transactions Table, Journal, Trial_Balance live SUMIFS, Private_vs_Business, Flags, Source_Register, Method_Notes, Dictionary
+    Evidence Pack ZIP per Appendix C/D: originals + reports + audit chain +
+    manifest.json + manifest.sha256. Verify with scripts/verify_pack.py.
+    """
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+
+    from .reports import generate_evidence_pack
+    pack = generate_evidence_pack(tenant_id)
+    append_audit_log(tenant_id, user_id, "report.evidence_pack", "reports",
+                     pack["report_id"],
+                     {"sha256": pack["sha256"], "file_count": pack["file_count"]})
+    return {"file_key": pack["file_key"], "sha256": pack["sha256"],
+            "report_id": pack["report_id"], "file_count": pack["file_count"],
+            "audit_head": pack["manifest"]["audit_chain"]["head_hash"]}
+
+@app.get("/v1/reports/excel")
+def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
+    """
+    Excel workbook per Appendix G + P&L + Balance Sheet (12 sheets, 12-month max window).
     """
     db = get_db()
     tenant_id = _tenant_of(user_id)
 
     from .reports import generate_excel_workbook
-    wb = generate_excel_workbook(tenant_id)
+    try:
+        wb = generate_excel_workbook(tenant_id, from_date, to_date)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     append_audit_log(tenant_id, user_id, "report.excel", "reports", wb["file_key"], {"sha256": wb["sha256"]})
     return wb
 

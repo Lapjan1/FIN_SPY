@@ -175,3 +175,9 @@ Symptom: Deploy f408c321 CRASHED at startup with IndexError: tuple index out of 
 Cause: _translate only handled ?/AUTOINCREMENT/INSERT OR REPLACE - strftime() view DDL, CREATE VIEW IF NOT EXISTS and CREATE TRIGGER passed through raw; one bad statement aborted the whole schema script.
 Fix: apps/api/db.py _translate maps strftime->EXTRACT (DOW matches %w), views->CREATE OR REPLACE VIEW; executescript skips trigger DDL and warns-per-statement instead of aborting; dim_entity subquery gained AS alias (pg requires it). Pinned by tests/test_pg_translate.py (4 tests, no live server). Deploy 77fef8ea SUCCESS, /health/ready 200 backend pg.
 Applies when: Any dual sqlite/pg schema - audit every CREATE for dialect-specific syntax, never let one statement fail boot.
+
+## 2026-10-28-31 Worker gate KeyError killed every upload silently
+Symptom: process_one_document returned (exception, None) on EVERY document - zero transactions ever persisted via worker; e2e still green.
+Cause: reconcile.py returns opening_closing_top_bottom/... keys but worker/main.py read gate[opening_closing]/gate[running_balance] (stale names from scaffold). Broad except converted KeyError to (exception, None); e2e masked it with if result:.
+Fix: worker reads the four real gate keys; drill tests assert result non-None unconditionally; PRAGMA busy_timeout=5000 for threaded TestClient flakes.
+Applies when: Any pipeline with catch-all + optional-result tests - e2e MUST assert the happy path ran, never if result:. Verify with audit_log extraction.fail counts.

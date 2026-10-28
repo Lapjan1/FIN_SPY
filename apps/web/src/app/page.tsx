@@ -39,7 +39,7 @@ export default function HomePage() {
             <li>Billing test-mode Paystack + Built with Meta</li>
           </ol>
         </div>
-        <SourceViewer docSha256="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" pageNo={3} lineIds={["L012","L013"]} bboxes={[{line_id:"L012",x0:10,y0:20,x1:90,y1:25}]} />
+        <SourceViewer docId={null} docSha256="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" pageNo={3} pageWidth={595} pageHeight={842} lineIds={["L012","L013"]} bboxes={[{line_id:"L012",x0:10,y0:20,x1:90,y1:25}]} />
       </div>
 
       <div className="border border-slate-800 rounded p-4">

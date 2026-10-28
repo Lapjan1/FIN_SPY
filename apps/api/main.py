@@ -13,7 +13,7 @@ DB-first: Every write goes to .db before next step, audit_log hash-chain SHA256(
 """
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, EmailStr
 from decimal import Decimal
 from typing import List, Optional
@@ -348,18 +348,63 @@ def list_transactions(request: Request, status: Optional[str] = None, user_id: i
 def get_sources(txn_id: str, user_id: int = Depends(require_login)):
     db = get_db()
     # Isolation check: ensure txn belongs to user's tenant
-    cur = db.execute("SELECT tenant_id FROM transactions WHERE id=?", (txn_id,))
+    cur = db.execute("SELECT tenant_id, document_id FROM transactions WHERE id=?", (txn_id,))
     row = cur.fetchone()
-    if row:
-        t_tenant = row["tenant_id"] if isinstance(row, dict) else row[0]
-        u_tenant = _tenant_of(user_id)
-        if t_tenant != u_tenant:
-            raise HTTPException(403, detail="Cross-tenant access denied - isolation guard")
-    # Returns page_no + bbox for highlight overlay - signature demo
-    cur = db.execute("SELECT ss.page_no, ss.line_id, ss.bbox_x0, ss.bbox_y0, ss.bbox_x1, ss.bbox_y1 FROM transaction_sources ts JOIN source_spans ss ON ts.span_id=ss.id WHERE ts.transaction_id=?", (txn_id,))
+    if not row:
+        raise HTTPException(404, "Transaction not found")
+    t_tenant = row["tenant_id"] if isinstance(row, dict) else row[0]
+    if t_tenant != _tenant_of(user_id):
+        raise HTTPException(403, detail="Cross-tenant access denied - isolation guard")
+    doc_id = row["document_id"] if isinstance(row, dict) else (row[1] if len(row) > 1 else None)
+    doc_sha, doc_name = None, None
+    if doc_id:
+        dcur = db.execute("SELECT sha256, original_filename FROM source_documents WHERE id=?", (doc_id,))
+        drow = dcur.fetchone()
+        if drow:
+            doc_sha = drow["sha256"] if isinstance(drow, dict) else drow[0]
+            doc_name = drow["original_filename"] if isinstance(drow, dict) else (drow[1] if len(drow) > 1 else None)
+    # Returns page_no + bbox + page dims for highlight overlay - signature demo
+    cur = db.execute("SELECT ss.page_no, ss.line_id, ss.bbox_x0, ss.bbox_y0, ss.bbox_x1, ss.bbox_y1, ss.page_width, ss.page_height FROM transaction_sources ts JOIN source_spans ss ON ts.span_id=ss.id WHERE ts.transaction_id=?", (txn_id,))
     spans = cur.fetchall()
-    bboxes = [{"line_id": (s["line_id"] if isinstance(s, dict) else s[1]), "x0": (s["bbox_x0"] if isinstance(s, dict) else 10), "y0": (s["bbox_y0"] if isinstance(s, dict) else 20), "x1": (s["bbox_x1"] if isinstance(s, dict) else 90), "y1": (s["bbox_y1"] if isinstance(s, dict) else 25)} for s in spans] if spans else [{"line_id":"L012","x0":10,"y0":20,"x1":90,"y1":25}]
-    return {"txn_id": txn_id, "page_no": 1, "line_ids": [b["line_id"] for b in bboxes], "bboxes": bboxes}
+    if not spans:
+        return {"txn_id": txn_id, "document_id": doc_id, "doc_sha256": doc_sha,
+                "original_filename": doc_name, "page_no": 1,
+                "page_width": None, "page_height": None, "line_ids": [],
+                "bboxes": [], "unlinked": True}
+    bboxes = [{"line_id": (s["line_id"] if isinstance(s, dict) else s[1]),
+               "x0": (s["bbox_x0"] if isinstance(s, dict) else s[2]),
+               "y0": (s["bbox_y0"] if isinstance(s, dict) else s[3]),
+               "x1": (s["bbox_x1"] if isinstance(s, dict) else s[4]),
+               "y1": (s["bbox_y1"] if isinstance(s, dict) else s[5])} for s in spans]
+    first = spans[0]
+    page_no = first["page_no"] if isinstance(first, dict) else first[0]
+    width = first["page_width"] if isinstance(first, dict) else (first[6] if len(first) > 6 else None)
+    height = first["page_height"] if isinstance(first, dict) else (first[7] if len(first) > 7 else None)
+    return {"txn_id": txn_id, "document_id": doc_id, "doc_sha256": doc_sha,
+            "original_filename": doc_name, "page_no": page_no,
+            "page_width": width, "page_height": height,
+            "line_ids": [b["line_id"] for b in bboxes], "bboxes": bboxes}
+
+@app.get("/v1/documents/{doc_id}/file")
+def get_document_file(doc_id: str, user_id: int = Depends(require_login)):
+    """Serve the vault PDF bytes for the drill viewer. Tenant-guarded."""
+    db = get_db()
+    cur = db.execute("SELECT tenant_id, sha256, storage_key, original_filename FROM source_documents WHERE id=?", (doc_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    t_tenant = row["tenant_id"] if isinstance(row, dict) else row[0]
+    if t_tenant != _tenant_of(user_id):
+        raise HTTPException(403, detail="Cross-tenant access denied - isolation guard")
+    sha = row["sha256"] if isinstance(row, dict) else row[1]
+    stored = row["storage_key"] if isinstance(row, dict) else (row[2] if len(row) > 2 else None)
+    fname = row["original_filename"] if isinstance(row, dict) else (row[3] if len(row) > 3 else "document.pdf")
+    path = Path(stored) if stored else VAULT_PATH / f"{sha}.pdf"
+    if not path.exists():
+        path = VAULT_PATH / f"{sha}.pdf"
+    if not path.exists():
+        raise HTTPException(404, "Vault file missing for document")
+    return FileResponse(str(path), media_type="application/pdf", filename=fname or "document.pdf")
 
 @app.get("/v1/books/templates")
 def list_book_templates(user_id: int = Depends(require_login)):

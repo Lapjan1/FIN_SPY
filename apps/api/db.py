@@ -44,6 +44,7 @@ class DbHandle:
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA foreign_keys=ON;")
+            self.conn.execute("PRAGMA busy_timeout=5000;")
 
     def _translate(self, sql: str) -> str:
         if self.backend != "pg":
@@ -269,6 +270,8 @@ def init_db():
         bbox_y0 REAL,
         bbox_x1 REAL,
         bbox_y1 REAL,
+        page_width REAL,
+        page_height REAL,
         text TEXT,
         text_sha256 TEXT,
         FOREIGN KEY (run_id) REFERENCES extraction_runs(id)
@@ -676,6 +679,23 @@ def _ensure_dedup_index(db: DbHandle):
             )
 
 
+def _ensure_span_dims(db: DbHandle):
+    """Add page_width/page_height to old source_spans tables (Day-6 drill).
+
+    Fresh files get the columns inline. sqlite has no ADD COLUMN IF NOT
+    EXISTS, so duplicate-column errors are swallowed; pg uses IF NOT EXISTS.
+    """
+    for col in ("page_width", "page_height"):
+        if db.backend == "pg":
+            sql = f"ALTER TABLE source_spans ADD COLUMN IF NOT EXISTS {col} REAL;"
+        else:
+            sql = f"ALTER TABLE source_spans ADD COLUMN {col} REAL;"
+        try:
+            db.execute(sql)
+        except Exception:
+            pass
+
+
 def _ensure_indexes(db: DbHandle):
     # Indexes for performance per homework Done Means: 1000 tx analyze <5s without LLM, <15s with LLM, PowerBI export
     indexes = [
@@ -716,6 +736,7 @@ def _ensure_indexes(db: DbHandle):
             pass
 
     _ensure_dedup_index(db)
+    _ensure_span_dims(db)
 
     # Views for PowerBI star-schema per homework Part 5.10 - need to drop and recreate to include account_number per user per merchant per account enhancement
     # Drop existing views if old definition without account_number

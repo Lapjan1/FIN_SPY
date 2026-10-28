@@ -12,19 +12,72 @@ export type Transaction = {
   direction: 'debit' | 'credit';
   balance_after_minor?: number;
   fingerprint_sha256: string;
-  status: 'proposed' | 'confirmed' | 'rejected' | 'exception';
+  status: 'proposed' | 'confirmed' | 'rejected' | 'exception' | 'needs_password' | 'queued';
   doc_id: string;
   page_no: number;
   line_ids: string[];
 };
 
 export type DashboardSummary = {
+  from_date: string | null;
+  to_date: string | null;
+  account_number: string | null;
+  active_template: string;
+  totals: {
+    txn_count: number;
+    inflow_count: number;
+    outflow_count: number;
+    inflow_minor: number;
+    outflow_minor: number;
+    net_flow_minor: number;
+    monthly_inflow: Record<string, number>;
+    monthly_outflow: Record<string, number>;
+    vendor_counts: Record<string, number>;
+  } | null;
   leak_score_per_month_minor: number;
   runway_months: number;
   burn_rate_minor: number;
   savings_rate_pct: number;
   private_vs_business_ratio: number;
-  top_leaks: Array<{ merchant: string; amount_minor: number; cadence_days: number; leak_per_month_minor: number }>;
+  inflow_minor: number;
+  outflow_minor: number;
+  net_flow_minor: number;
+  trial_pages_remaining: number | null;
+  is_trial_unlimited: boolean;
+};
+
+export type TxnSources = {
+  txn_id: string;
+  document_id: string | null;
+  doc_sha256: string | null;
+  original_filename: string | null;
+  page_no: number;
+  page_width: number | null;
+  page_height: number | null;
+  line_ids: string[];
+  bboxes: Array<{ line_id: string; x0: number; y0: number; x1: number; y1: number }>;
+  unlinked?: boolean;
+};
+
+export type Flag = {
+  id: string;
+  tenant_id: string;
+  test_id: string;
+  severity: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  result_json: string | null;
+  code_version: string | null;
+  created_at: string | null;
+};
+
+export type DocInfo = {
+  id: string;
+  sha256: string;
+  original_filename: string;
+  size_bytes: number;
+  status: string;
+  uploaded_at_utc: string;
 };
 
 export async function fetchTransactions(params?: Record<string,string>): Promise<Transaction[]> {
@@ -141,6 +194,63 @@ export function editTransaction(
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export function fetchDashboard(
+  userId: string,
+  params?: { from_date?: string; to_date?: string; account_number?: string },
+): Promise<DashboardSummary> {
+  const qs = params
+    ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString()
+    : '';
+  return api<DashboardSummary>(`/v1/dashboard/summary${qs}`, userId);
+}
+
+export function fetchTransactionsAuth(userId: string): Promise<Transaction[]> {
+  return api<Transaction[]>('/v1/transactions', userId);
+}
+
+export function fetchTxnSources(userId: string, txnId: string): Promise<TxnSources> {
+  return api<TxnSources>(`/v1/transactions/${txnId}/sources`, userId);
+}
+
+export function fetchFlags(userId: string): Promise<Flag[]> {
+  return api<Flag[]>('/v1/flags', userId);
+}
+
+export function fetchDocuments(userId: string): Promise<DocInfo[]> {
+  return api<DocInfo[]>('/v1/documents', userId);
+}
+
+export function documentFileOptions(userId: string, docId: string) {
+  return {
+    url: `${API_BASE}/v1/documents/${docId}/file`,
+    httpHeaders: { 'X-User-Id': userId },
+  };
+}
+
+export async function uploadDocument(
+  userId: string,
+  file: File,
+  password?: string,
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('file', file);
+  if (password) form.append('pdf_password', password);
+  const res = await fetch(`${API_BASE}/v1/documents`, {
+    method: 'POST',
+    headers: { 'X-User-Id': userId },
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { detail?: string }).detail || `upload failed ${res.status}`);
+  }
+  return data as Record<string, unknown>;
+}
+
+export function runSpy(userId: string): Promise<{ txn_count: number; flags: number; by_code: Record<string, number>; leak_per_month_minor: number }> {
+  return api('/v1/spy/run', userId, { method: 'POST' });
 }
 
 export function formatRands(minor: number | undefined | null): string {

@@ -328,6 +328,8 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     # Token/cost logging per homework Part 5.7 ~8-page statement 2k tokens/page in + 5.5k out = $0.045
     # TODO: log to usage_events
 
+    # Day-6 drill: carry pages so persist_to_db stores real bboxes + dims
+    result.pages = pages
     return result
 
 def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, run_id: str):
@@ -393,27 +395,41 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
                 pass
 
     # source_spans + transactions with account_id and account_number per user question
-    for page_no in [1]:
-        for row in result.rows:
+    # Day-6 drill: real per-line bbox + page dims from result.pages (fallback
+    # placeholder only when pages are absent, e.g. synthetic unit results)
+    line_lookup = {}
+    for page in getattr(result, "pages", None) or []:
+        for line in page.get("lines", []):
+            bbox = line.get("bbox") or [0, 0, 100, 10]
+            line_lookup[line.get("line_id")] = (
+                page.get("page_no", 1), page.get("width"), page.get("height"),
+                bbox, line.get("text", ""))
+    from .base import fingerprint_txn
+    for row in result.rows:
+        txn_id = f"txn-{uuid.uuid4().hex[:8]}"
+        fp = fingerprint_txn(row.date, row.amount_minor, row.description)
+        # Ensure transaction only once ever per bank account number per user question: UNIQUE(tenant_id, account_number, fingerprint_sha256)
+        # Check if fingerprint already exists for this tenant + account_number
+        cur = db.execute("SELECT id FROM transactions WHERE tenant_id=? AND account_number=? AND fingerprint_sha256=?", (tenant_id, account_number or "", fp))
+        existing = cur.fetchone()
+        if existing:
+            # Duplicate transaction - skip per each transaction only once ever
+            # (spans are written after this check, so no orphans)
+            continue
+        db.execute(
+            "INSERT OR REPLACE INTO transactions (id, tenant_id, account_id, account_number, document_id, run_id, txn_date, description_raw, amount_minor, currency, direction, balance_after_minor, fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txn_id, tenant_id, account_id, account_number or "", document_id, run_id, row.date, row.description, row.amount_minor, "ZAR", row.direction, row.balance_after_minor, fp, "proposed")
+        )
+        for line_id in (row.line_ids or ["L001"]):
+            page_no, width, height, bbox, text = line_lookup.get(
+                line_id, (1, None, None, [0, 0, 100, 10], row.source_quote))
             span_id = f"span-{uuid.uuid4().hex[:8]}"
-            line_id = row.line_ids[0] if row.line_ids else "L001"
             db.execute(
-                "INSERT OR REPLACE INTO source_spans (id, tenant_id, run_id, document_id, page_no, line_id, bbox_x0, bbox_y0, bbox_x1, bbox_y1, text, text_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (span_id, tenant_id, run_id, document_id, 1, line_id, 0,0,100,10, row.source_quote, hashlib.sha256(row.source_quote.encode()).hexdigest()[:16])
-            )
-            txn_id = f"txn-{uuid.uuid4().hex[:8]}"
-            from .base import fingerprint_txn
-            fp = fingerprint_txn(row.date, row.amount_minor, row.description)
-            # Ensure transaction only once ever per bank account number per user question: UNIQUE(tenant_id, account_number, fingerprint_sha256)
-            # Check if fingerprint already exists for this tenant + account_number
-            cur = db.execute("SELECT id FROM transactions WHERE tenant_id=? AND account_number=? AND fingerprint_sha256=?", (tenant_id, account_number or "", fp))
-            existing = cur.fetchone()
-            if existing:
-                # Duplicate transaction - skip per each transaction only once ever
-                continue
-            db.execute(
-                "INSERT OR REPLACE INTO transactions (id, tenant_id, account_id, account_number, document_id, run_id, txn_date, description_raw, amount_minor, currency, direction, balance_after_minor, fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (txn_id, tenant_id, account_id, account_number or "", document_id, run_id, row.date, row.description, row.amount_minor, "ZAR", row.direction, row.balance_after_minor, fp, "proposed")
+                "INSERT OR REPLACE INTO source_spans (id, tenant_id, run_id, document_id, page_no, line_id, bbox_x0, bbox_y0, bbox_x1, bbox_y1, page_width, page_height, text, text_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (span_id, tenant_id, run_id, document_id, page_no, line_id,
+                 bbox[0], bbox[1], bbox[2], bbox[3], width, height,
+                 text or row.source_quote,
+                 hashlib.sha256((text or row.source_quote).encode()).hexdigest()[:16])
             )
             db.execute(
                 "INSERT OR REPLACE INTO transaction_sources (transaction_id, span_id, role) VALUES (?,?,?)",

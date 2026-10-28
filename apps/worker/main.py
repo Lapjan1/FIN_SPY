@@ -50,9 +50,13 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
         # Reconciliation gate per AGENTS.md + docs/FLOWS.md + apps/worker/reconcile.py
         # Opening + sum = closing, running balance monotonic, duplicate fingerprints
         gate = run_reconciliation_gate(result.opening_balance_minor, result.closing_balance_minor, result.rows)
-        warnings = result.warnings + [gate["opening_closing"]["message"]] if not gate["opening_closing"]["pass"] else result.warnings
-        if not gate["running_balance"]["pass"]:
-            warnings.extend(gate["running_balance"]["breaks"])
+        warnings = list(result.warnings)
+        for _gk in ("opening_closing_top_bottom", "opening_closing_bottom_top"):
+            if not gate[_gk]["pass"]:
+                warnings.append(gate[_gk]["message"])
+        for _gk in ("running_balance_top_bottom", "running_balance_bottom_top"):
+            if not gate[_gk]["pass"]:
+                warnings.extend(gate[_gk]["breaks"])
         if not gate["duplicates"]["pass"]:
             warnings.append(f"Duplicate fingerprints: {gate['duplicates']['duplicates']}")
 

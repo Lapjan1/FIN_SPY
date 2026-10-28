@@ -152,6 +152,11 @@ def fingerprint_txn(date: str, amount_minor: int, desc_norm: str) -> str:
 @app.post("/v1/auth/register")
 def register(inp: RegisterIn):
     uid = create_user(inp.email, inp.password, inp.name, inp.tenant_id)
+    try:
+        from .email import send_welcome_email
+        send_welcome_email(inp.email, inp.name, tenant_id=inp.tenant_id)
+    except Exception:
+        pass  # email must never break registration
     return {"id": uid, "email": inp.email, "tenant_id": inp.tenant_id, "message": "Registered - use X-User-Id header for dev auth"}
 
 @app.post("/v1/auth/login")
@@ -165,9 +170,19 @@ def login(inp: LoginIn):
 @app.post("/v1/auth/forgot")
 def forgot(inp: ForgotIn):
     token = create_reset_token(inp.email)
-    # In prod, send email via Resend - for dev return token directly like clearmind forgot_password.html:10 shows link openly (but we log audit)
     if token:
-        return {"sent": True, "reset_token": token, "note": "In prod, this is emailed, not returned. Dev mode returns for testing."}
+        from .email import get_email_api_key, send_reset_email
+        try:
+            db = get_db()
+            ucur = db.execute("SELECT tenant_id FROM users WHERE email=?", (inp.email.lower(),))
+            urow = ucur.fetchone()
+            utenant = (urow["tenant_id"] if isinstance(urow, dict) else urow[0]) if urow else "default-tenant"
+            send_reset_email(inp.email, token, tenant_id=utenant)
+        except Exception:
+            pass
+        if get_email_api_key():
+            return {"sent": True}  # prod: token emailed, never returned
+        return {"sent": True, "reset_token": token, "note": "Dev mode (no email key): token returned for testing."}
     # Always return sent true to avoid user enumeration (clearmind does)
     return {"sent": True}
 
@@ -653,7 +668,7 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
     return pack
 
 @app.get("/v1/reports/evidence-pack")
-def get_evidence_pack(user_id: int = Depends(require_login)):
+def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login)):
     """
     Evidence Pack ZIP per Appendix C/D: originals + reports + audit chain +
     manifest.json + manifest.sha256. Verify with scripts/verify_pack.py.
@@ -662,13 +677,39 @@ def get_evidence_pack(user_id: int = Depends(require_login)):
     tenant_id = _tenant_of(user_id)
 
     from .reports import generate_evidence_pack
-    pack = generate_evidence_pack(tenant_id)
+    pack = generate_evidence_pack(tenant_id, sign=sign)
     append_audit_log(tenant_id, user_id, "report.evidence_pack", "reports",
                      pack["report_id"],
-                     {"sha256": pack["sha256"], "file_count": pack["file_count"]})
+                     {"sha256": pack["sha256"], "file_count": pack["file_count"],
+                      "signed": pack.get("signed", False)})
     return {"file_key": pack["file_key"], "sha256": pack["sha256"],
             "report_id": pack["report_id"], "file_count": pack["file_count"],
-            "audit_head": pack["manifest"]["audit_chain"]["head_hash"]}
+            "audit_head": pack["manifest"]["audit_chain"]["head_hash"],
+            "signed": pack.get("signed", False),
+            "sign_warning": pack.get("sign_warning")}
+
+@app.get("/v1/reports/signed-pdf")
+def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
+    """
+    PAdES-signed summary PDF: built from DB, signed with configured cert,
+    RFC3161-timestamped when a TSA is reachable (else explicit warning).
+    422 when signing is not configured or the window exceeds 12 months.
+    """
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+
+    from .signing import build_and_sign
+    try:
+        out = build_and_sign(tenant_id, from_date, to_date)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    append_audit_log(tenant_id, user_id, "report.signed_pdf", "reports",
+                     out["file_key"], {"sha256": out["sha256"],
+                                       "timestamped": out["signed"]["timestamped"]})
+    return {"file_key": out["file_key"], "sha256": out["sha256"],
+            "timestamped": out["signed"]["timestamped"],
+            "warning": out["signed"]["warning"],
+            "from_date": out["from_date"], "to_date": out["to_date"]}
 
 @app.get("/v1/reports/excel")
 def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):

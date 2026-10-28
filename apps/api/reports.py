@@ -515,7 +515,8 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
             "truncated": data["jl_count"] > 5000}
 
 
-def generate_evidence_pack(tenant_id: str, report_id: str | None = None) -> Dict:
+def generate_evidence_pack(tenant_id: str, report_id: str | None = None,
+                             sign: bool = False) -> Dict:
     """
     Evidence Pack ZIP per Appendix C/D: originals + reports + audit chain +
     manifest.json + manifest.sha256, all SHA256-pinned. Verifiable with
@@ -610,6 +611,22 @@ def generate_evidence_pack(tenant_id: str, report_id: str | None = None) -> Dict
             "anchor_tsr": None,  # Day-7 TSA: null until a real token is issued
         },
     }
+    signed_flag, sign_warning = False, None
+    if sign:
+        from .signing import build_and_sign, signing_configured
+        if not signing_configured():
+            sign_warning = "signing skipped: FINSPY_SIGN_CERT/FINSPY_SIGN_KEY missing"
+        else:
+            try:
+                sout = build_and_sign(tenant_id, None, None)
+                add_file(Path(sout["file_key"]), Path(sout["file_key"]).name,
+                         "report", derived_from="db-summary+pades")
+                signed_flag = True
+                if sout["signed"].get("warning"):
+                    sign_warning = sout["signed"]["warning"]
+            except Exception as e:
+                sign_warning = f"signing failed: {e}".strip()[:300]
+
     manifest_path = stage / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     (stage / "manifest.sha256").write_text(_sha256_file(manifest_path))
@@ -621,4 +638,5 @@ def generate_evidence_pack(tenant_id: str, report_id: str | None = None) -> Dict
                 z.write(p, p.relative_to(stage).as_posix())
     return {"file_key": str(zip_path), "sha256": _sha256_file(zip_path),
             "report_id": report_id, "manifest": manifest,
-            "file_count": len(files)}
+            "file_count": len(files), "signed": signed_flag,
+            "sign_warning": sign_warning}

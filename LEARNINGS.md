@@ -193,3 +193,21 @@ Symptom: /v1/chat returned a hardcoded mock string; naive LLM wiring would burn 
 Cause: No grounding boundary between model output and ledger facts.
 Fix: chat.py runs deterministic DB tools first and templates the answer; a local model may only rephrase supplied facts; mock responses (no-key content or usage.error) are detected and skipped; 1s TCP pre-check avoids 16s SDK retry waits; hosted providers never attempted - zero credit.
 Applies when: Any assistant over authoritative data - tools compute, model phrases, mocks never surface.
+
+## 2026-10-28-34 pyHanko valid intact trusted are three verdicts
+Symptom: tampered PDF still reported valid=True; signer CN lookup returned None.
+Cause: valid covers CMS math only; digest breakage shows in intact; signer cert lives in status.signing_cert (asn1crypto), not status.signer. ByteRange gap bytes (CMS blob) are uncovered by design - flipping there proves nothing.
+Fix: verify returns valid+intact+trusted+signer separately; tamper test parses /ByteRange and flips a covered content byte; assert intact False.
+Applies when: Any signature verification - name which verdict each assertion pins.
+
+## 2026-10-28-35 Pin cryptography on win-ARM64 before pip install
+Symptom: pip install pyHanko tried building cryptography from source and failed (no Rust, no ARM wheel for latest).
+Cause: Resolver upgrades transitive deps past what has wheels.
+Fix: pip install pyHanko cryptography==<installed> keeps the working native build and adds the pure-Python tree.
+Applies when: Any pip add on ARM Windows - check native deps first.
+
+## 2026-10-28-36 Reset tokens are dev-only response content
+Symptom: /v1/auth/forgot returned the reset token openly (clearmind leak pattern).
+Cause: No boundary between dev convenience and prod secrecy.
+Fix: token returned only when no email key is configured; with a key it is emailed and the response carries sent:true only; red test pins the keyless dev path so the suite still covers reset.
+Applies when: Any secret-bearing response - gate on the production capability, not on ENV flags.

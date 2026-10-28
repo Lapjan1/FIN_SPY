@@ -111,22 +111,22 @@ def send_email(to_email: str, subject: str, body: str, html: Optional[str] = Non
         log.warning(f"Email send failed: {e}")
         return False
 
-def send_welcome_email(to_email: str, name: str = "", app_base_url: str = "https://finspy-production.up.railway.app"):
+def send_welcome_email(to_email: str, name: str = "", app_base_url: str = "https://finspy-production.up.railway.app", tenant_id: str = "default"):
     subject = "Welcome to FIN_SPY - Financial Surveillance & Peak Insights"
     body = f"Hi {name or 'there'},\n\nWelcome to FIN_SPY! Your account {to_email} is ready.\n\nGet started: {app_base_url}\n\nYour money has a stalker. Find it.\n\nBuilt with Meta Muse Spark/Wonder/Image/SAM 3.1\n\n- FIN_SPY Team\nnoreply@fin-spy.example"
     html = f"<p>Hi {name or 'there'},</p><p>Welcome to FIN_SPY! Your account {to_email} is ready.</p><p><a href='{app_base_url}'>Get started</a></p><p>Your money has a stalker. Find it.</p><p>Built with Meta Muse</p><p>- FIN_SPY Team<br>noreply@fin-spy.example</p>"
-    return send_email(to_email, subject, body, html)
+    return send_email(to_email, subject, body, html, tenant_id=tenant_id)
 
-def send_reset_email(to_email: str, token: str, app_base_url: str = "https://finspy-production.up.railway.app"):
+def send_reset_email(to_email: str, token: str, app_base_url: str = "https://finspy-production.up.railway.app", tenant_id: str = "default"):
     reset_link = f"{app_base_url}/reset?token={token}"
     # For Paystack live URL proof, use railway domain
     subject = "FIN_SPY - Reset your password"
     body = f"Reset your password link (expires 1h): {reset_link}\n\nIf you didn't request, ignore.\n\n- FIN_SPY noreply@fin-spy.example"
     html = f"<p>Reset your password (expires 1h):</p><p><a href='{reset_link}'>{reset_link}</a></p><p>If you didn't request, ignore.</p><p>- FIN_SPY noreply@fin-spy.example</p>"
-    return send_email(to_email, subject, body, html)
+    return send_email(to_email, subject, body, html, tenant_id=tenant_id)
 
-def send_payment_failed_email(to_email: str, plan_code: str = "individual"):
+def send_payment_failed_email(to_email: str, plan_code: str = "individual", tenant_id: str = "default"):
     subject = f"FIN_SPY - Payment failed for {plan_code}"
     body = f"Your payment for {plan_code} failed. Your subscription will be read-only after 7 days grace per refund policy.\n\nUpdate card: https://finspy-production.up.railway.app/account\n\n- FIN_SPY noreply"
     html = f"<p>Your payment for {plan_code} failed. Read-only after 7 days grace.</p><p><a href='https://finspy-production.up.railway.app/account'>Update card</a></p>"
-    return send_email(to_email, subject, body, html)
+    return send_email(to_email, subject, body, html, tenant_id=tenant_id)

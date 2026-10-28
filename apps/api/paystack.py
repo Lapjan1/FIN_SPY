@@ -142,6 +142,19 @@ def create_subscription(customer_code: str, plan_code: str, authorization_code: 
     resp.raise_for_status()
     return resp.json()["data"]
 
+def _maybe_send_dunning(event_type: str, user, tenant_id: str) -> None:
+    """Dunning email on failed payments; 7-day grace per template, status untouched."""
+    if "failed" not in event_type:
+        return
+    try:
+        from .email import send_payment_failed_email
+        uemail = user["email"] if isinstance(user, dict) else (user[2] if len(user) > 2 else "")
+        if uemail:
+            send_payment_failed_email(uemail, tenant_id=tenant_id)
+    except Exception:
+        pass
+
+
 def handle_webhook_event(event_type: str, event_data: Dict) -> Optional[str]:
     """
     Like clearmind app.py:328-360 + ClearFlag paystack.js
@@ -215,6 +228,7 @@ def handle_webhook_event(event_type: str, event_data: Dict) -> Optional[str]:
         return tenant_id
 
     elif "deactivated" in event_type or "failed" in event_type or event_type in ("subscription.disable", "invoice.payment_failed"):
+        _maybe_send_dunning(event_type, user, tenant_id)
         # Set free + reset usage on renewal failure? ClearFlag resets builds_used on renewal, we set status free on disable
         if "disable" in event_type:
             db.execute("UPDATE users SET subscription_status='free' WHERE id=?", (user_id,))

@@ -77,7 +77,7 @@ Verdict scale: DONE = implemented + tested + critic-survived. PARTIAL = real cor
 - Day2 PARTIAL - vault/auth/worker/reconcile DONE+tested (main.py:209, auth.py:23, worker/main.py:26); email impl real (email.py:31-132) but ZERO call sites, register/forgot unwired, no tests/test_email*.py.
 - Day3 DONE - Lxxx+bbox+Decimal SA+both-dir gates (extractor.py:14, reconcile.py:9/28/51/72); golden 5 passed fresh 2026-10-28.
 - Day4 DONE (code) - ledger/classify/review/9999/repost/reverify (ledger.py:250/380/584/681/773/890, classify.py:197/317, audit.py:94/143); suite 130 passed; 45 files uncommitted, no Day4-titled commit yet.
-- Day5 PARTIAL - kpi.py:73 totals real; KILLED: detectors.py:13-14/43-44 return [] stubs, debt.py:42/55 TODO + main.py:515 months:12/saved:0 hardcoded, no spy/kpi/debt tests.
+- Day5 DONE 2026-10-28 - detectors real (SUB/DUP/NDUP/F-010/F-030/BEN/F-020), Decimal amortization + what-if, leak wired to KPIs, POST /v1/spy/run + debt/plan live, tenant-lookup bugfix on 4 endpoints, 11 tests, suite 141/141 (see docs/RECAP_DAY5.md).
 - Day6 PARTIAL - dashboard API main.py:408 + settings DONE; web: review page wired, home mock KpiCards, no /dashboard, no upload/inbox routes, SourceViewer.tsx:19 react-pdf TODO, chat main.py:519 hardcoded mock string.
 - Day7 PARTIAL - powerbi reports.py:18 + auditor-csv :146 + billing HMAC :84 DONE; excel 4/10 sheets (need Appendix G 10); pack GENERATION missing (no manifest/zip builder); PAdES/TSA issue-side missing (verify_pack.py:73-78 notes only, zero pyHanko hits repo-wide).
 - Day8 TODO - Wonder/Image/SAM absent; 100RPM limiter absent; uptime.yml cron commented (manual only), ci.yml done; ruff red pre-existing (11 verified on untouched tree), pyright/tsc clean, pnpm lint unusable pre-existing.

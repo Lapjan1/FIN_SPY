@@ -131,13 +131,9 @@ def compute_kpis(transactions: List[Dict], current_balance_minor: int = None, fr
     # Top vendors by outflow
     top_vendors = [{"vendor": v, "amount_minor": amt} for v, amt in vendor_counts.most_common(5)]
 
-    # Subscription creep - detect recurring same amount merchant 28-32 days
-    # Simplified: if same vendor appears >=3 times with similar amount
-    subscription_creep = 0
-    for vendor, amt in vendor_counts.items():
-        # If vendor appears multiple times, count as subscription
-        # For MVP, sum amounts where count >=3? Actually vendor_counts already sums, but we need count
-        pass
+    # Subscription creep F-020: sum of recurring monthly costs from detectors
+    from apps.worker.spy.detectors import leak_score_per_month
+    subscription_creep = leak_score_per_month(transactions)
 
     return {
         "from_date": from_date,

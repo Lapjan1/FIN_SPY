@@ -226,9 +226,7 @@ async def upload_document(
         raise HTTPException(400, "Unsupported type")
 
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else (row[0] if row else "default-tenant")
+    tenant_id = _tenant_of(user_id)
 
     # Trial pages check like clearmind get_trial_remaining
     remaining = get_trial_pages_remaining(user_id)
@@ -321,9 +319,7 @@ async def upload_document(
 @app.get("/v1/documents")
 def list_documents(request: Request, user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
     rows = cur.fetchall()
     return [dict(r) if not isinstance(r, dict) else r for r in rows]
@@ -331,9 +327,7 @@ def list_documents(request: Request, user_id: int = Depends(require_login)):
 @app.get("/v1/transactions")
 def list_transactions(request: Request, status: Optional[str] = None, user_id: int = Depends(require_login)) -> List[TransactionOut]:
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     # Read from DB, not extraction directly - DB-first per AGENTS.md
     cur = db.execute("SELECT * FROM transactions WHERE tenant_id=? ORDER BY txn_date DESC LIMIT 100", (tenant_id,))
     # For scaffold, return empty if none, else map
@@ -358,9 +352,7 @@ def get_sources(txn_id: str, user_id: int = Depends(require_login)):
     row = cur.fetchone()
     if row:
         t_tenant = row["tenant_id"] if isinstance(row, dict) else row[0]
-        cur2 = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-        u_row = cur2.fetchone()
-        u_tenant = u_row["tenant_id"] if isinstance(u_row, dict) else "default-tenant"
+        u_tenant = _tenant_of(user_id)
         if t_tenant != u_tenant:
             raise HTTPException(403, detail="Cross-tenant access denied - isolation guard")
     # Returns page_no + bbox for highlight overlay - signature demo
@@ -378,9 +370,7 @@ def list_book_templates(user_id: int = Depends(require_login)):
 @app.get("/v1/books/active")
 def get_active_book(user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     from apps.worker.parsers.registry import get_active_template
     active = get_active_template(tenant_id)
     cur = db.execute("SELECT COUNT(*) as cnt FROM accounts WHERE tenant_id=?", (tenant_id,))
@@ -391,9 +381,7 @@ def get_active_book(user_id: int = Depends(require_login)):
 @app.post("/v1/books/select")
 def select_book(inp: BooksSelectIn, user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     from apps.worker.parsers.registry import set_active_template, VALID_TEMPLATES
     if inp.template not in VALID_TEMPLATES:
         raise HTTPException(422, f"Invalid parameters: template must be one of {VALID_TEMPLATES}, got '{inp.template}'")
@@ -409,9 +397,7 @@ def select_book(inp: BooksSelectIn, user_id: int = Depends(require_login)):
 def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date: Optional[str] = None, account_number: Optional[str] = None, user_id: int = Depends(require_login)):
     _validate_period(from_date, to_date)
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     from apps.worker.parsers.registry import get_active_template
     active = get_active_template(tenant_id)
     # Validate account_number exists for tenant if provided (never work on non-existing accounts)
@@ -468,9 +454,7 @@ def review_queue(user_id: int = Depends(require_login)):
     Returns transactions with status proposed|exception|needs_password that failed reconciliation gate or low confidence
     """
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     # Get transactions that need review: status proposed with warnings, exception, needs_password, or from extraction_runs with reconciliation fail
     cur = db.execute("""
         SELECT t.id, t.txn_date, t.description_raw, t.amount_minor, t.direction, t.status, t.fingerprint_sha256,
@@ -499,20 +483,73 @@ def review_queue(user_id: int = Depends(require_login)):
 @app.get("/v1/flags")
 def flags(user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     cur = db.execute("SELECT * FROM flags WHERE tenant_id=? ORDER BY created_at DESC LIMIT 50", (tenant_id,))
     rows = cur.fetchall()
     return [dict(r) if not isinstance(r, dict) else r for r in rows]
 
 @app.post("/v1/debt/plan")
 def debt_plan(req: DebtPlanRequest, user_id: int = Depends(require_login)):
-    if req.method == "snowball":
-        order = sorted(req.debts, key=lambda d: d.balance_minor)
-    else:
-        order = sorted(req.debts, key=lambda d: d.apr_pct, reverse=True)
-    return {"method": req.method, "order": [d.creditor for d in order], "months": 12, "interest_saved_minor": 0, "total_paid_minor": sum(d.balance_minor for d in order)}
+    from apps.worker.spy.debt import Debt, plan_debts, what_if_extra
+    try:
+        debts = [Debt(creditor=d.creditor, balance_minor=d.balance_minor,
+                      apr_pct=d.apr_pct, min_payment_minor=d.min_payment_minor)
+                 for d in req.debts]
+        plan = plan_debts(debts, req.extra_cash_per_month_minor, req.method)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    out = dict(plan)
+    if req.extra_cash_per_month_minor > 0:
+        out["what_if"] = what_if_extra(debts, req.extra_cash_per_month_minor, req.method)
+    return out
+
+@app.post("/v1/spy/run")
+def spy_run(user_id: int = Depends(require_login)):
+    """Run Day-5 spy detectors over tenant transactions, persist flags.
+
+    Deterministic flag ids: re-runs overwrite, never duplicate.
+    """
+    import json
+    from apps.worker.spy import detectors as det
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    cur = db.execute(
+        "SELECT id, txn_date, description_raw, amount_minor, direction,"
+        " fingerprint_sha256 FROM transactions WHERE tenant_id=? ORDER BY txn_date ASC",
+        (tenant_id,))
+    txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+    if not txns:
+        return {"tenant_id": tenant_id, "txn_count": 0, "flags": 0, "by_code": {}}
+    found = (det.detect_recurring(txns) + det.detect_duplicate(txns)
+             + det.detect_fee(txns) + det.detect_anomaly_iqr(txns)
+             + det.detect_benford(txns))
+    leak = det.leak_score_per_month(txns)
+    if leak > 0:
+        found.append({"type": "subscription_leak", "code": "F-020",
+                      "leak_per_month_minor": leak})
+    window_start = min(t.get("txn_date", "") for t in txns)
+    window_end = max(t.get("txn_date", "") for t in txns)
+    severity = {"DUP": "high", "NDUP": "high", "F-030": "medium", "F-010": "info",
+                "SUB": "info", "F-020": "info", "BEN": "low", "RP": "medium"}
+    by_code: dict = {}
+    for f in found:
+        code = f.get("code", "UNK")
+        key = f.get("tx_id") or f.get("merchant") or f.get("type")
+        fid = det.flag_id(tenant_id, code, str(key))
+        db.execute(
+            "INSERT OR REPLACE INTO flags (id, tenant_id, test_id, params_json,"
+            " severity, window_start, window_end, result_json, code_version)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (fid, tenant_id, code, json.dumps({"type": f.get("type")}),
+             severity.get(code, "info"), window_start, window_end,
+             json.dumps(f), "day5-v1"))
+        by_code[code] = by_code.get(code, 0) + 1
+    db.commit()
+    append_audit_log(tenant_id, user_id, "spy.run", "flags", tenant_id,
+                     {"txn_count": len(txns), "flags": len(found), "by_code": by_code})
+    db.commit()
+    return {"tenant_id": tenant_id, "txn_count": len(txns), "flags": len(found),
+            "by_code": by_code, "leak_per_month_minor": leak}
 
 @app.post("/v1/chat")
 def chat(req: ChatRequest, user_id: int = Depends(require_login)):
@@ -521,9 +558,7 @@ def chat(req: ChatRequest, user_id: int = Depends(require_login)):
 @app.post("/v1/reports")
 def create_report(kind: str = "excel", request: Request = None, user_id: int = Depends(require_subscription)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     report_id = hashlib.sha256(f"{tenant_id}{kind}{os.urandom(8)}".encode()).hexdigest()[:16]
     db.execute("INSERT INTO reports (id, tenant_id, kind, generated_by) VALUES (?,?,?,?)", (report_id, tenant_id, kind, user_id))
     append_audit_log(tenant_id, user_id, f"report.create.{kind}", "reports", report_id, {"kind": kind})
@@ -550,9 +585,7 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
     fact_transactions, fact_journal, dim_date, dim_account, dim_category, dim_entity, dim_document as Excel + CSVs + guide
     """
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
 
     from .reports import generate_powerbi_pack
     pack = generate_powerbi_pack(tenant_id)
@@ -568,9 +601,7 @@ def get_excel_workbook(user_id: int = Depends(require_login)):
     Excel workbook per Appendix G: Cover, Summary, Transactions Table, Journal, Trial_Balance live SUMIFS, Private_vs_Business, Flags, Source_Register, Method_Notes, Dictionary
     """
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
 
     from .reports import generate_excel_workbook
     wb = generate_excel_workbook(tenant_id)
@@ -587,9 +618,7 @@ def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] 
     Query params: vendor normalized merchant filter to export just a vendor if we do own set of books so user can export vendor and add all transactions to certain account if like, sort and add rule
     """
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
 
     from .reports import generate_auditor_csv
 
@@ -635,9 +664,7 @@ def get_report(report_id: str, user_id: int = Depends(require_login)):
         raise HTTPException(404, "Report not found")
     r = dict(row) if not isinstance(row, dict) else row
     # Isolation check
-    cur2 = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    u_row = cur2.fetchone()
-    u_tenant = u_row["tenant_id"] if isinstance(u_row, dict) else "default-tenant"
+    u_tenant = _tenant_of(user_id)
     if r.get("tenant_id") != u_tenant:
         raise HTTPException(403, "Cross-tenant denied")
     return r
@@ -726,9 +753,7 @@ async def paystack_webhook(request: Request):
 @app.get("/v1/audit")
 def audit(object_type: Optional[str] = None, user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     if object_type:
         cur = db.execute("SELECT * FROM audit_log WHERE tenant_id=? AND object_type=? ORDER BY id DESC LIMIT 100", (tenant_id, object_type))
     else:
@@ -771,9 +796,7 @@ def update_settings(inp: SettingsUpdateIn, user_id: int = Depends(require_admin)
         pass
     db = get_db()
     # Determine tenant for audit
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else (row[0] if row else "default-tenant")
+    tenant_id = _tenant_of(user_id)
     db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (inp.key, inp.value))
     append_audit_log(tenant_id, user_id, "settings.update", "settings", inp.key, {"key": inp.key})
     db.commit()
@@ -819,9 +842,7 @@ class VendorRuleIn(BaseModel):
 @app.get("/v1/vendors")
 def list_vendors(user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     from .vendor import get_vendors
     vendors = get_vendors(tenant_id)
     return {"vendors": vendors, "count": len(vendors)}
@@ -829,9 +850,7 @@ def list_vendors(user_id: int = Depends(require_login)):
 @app.get("/v1/vendors/rules")
 def list_vendor_rules(account_number: Optional[str] = None, user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     from .vendor import get_vendor_rules
     rules = get_vendor_rules(tenant_id, account_number)
     return {"rules": rules, "count": len(rules)}
@@ -839,9 +858,7 @@ def list_vendor_rules(account_number: Optional[str] = None, user_id: int = Depen
 @app.post("/v1/vendors/rules")
 def create_vendor_rule_endpoint(inp: VendorRuleIn, user_id: int = Depends(require_login)):
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     # Extra manual validation so error message always says "Invalid parameters" (fixes bug report)
     if not inp.normalized_merchant or not inp.normalized_merchant.strip():
         raise HTTPException(422, "Invalid parameters: normalized_merchant is required")
@@ -867,9 +884,7 @@ def apply_vendor_rule(rule_id: str, user_id: int = Depends(require_login)):
     Apply rule to all matching transactions for that merchant+account
     """
     db = get_db()
-    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
-    row = cur.fetchone()
-    tenant_id = row["tenant_id"] if isinstance(row, dict) else "default-tenant"
+    tenant_id = _tenant_of(user_id)
     # Get rule
     cur = db.execute("SELECT * FROM vendor_rules WHERE id=? AND tenant_id=?", (rule_id, tenant_id))
     rule_row = cur.fetchone()

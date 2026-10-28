@@ -9,7 +9,7 @@ import json
 
 from .base import ExtractionResult, Span
 from .fnb import parse_fnb_lines
-from ..llm.client import MetaClient, prompt_hash
+from ..llm.client import MetaClient, provider_for_model, resolve_model
 
 def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> List[Dict]:
     """
@@ -145,7 +145,15 @@ def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[E
 
     return None
 
-def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1", tenant_id: str = "default") -> ExtractionResult:
+def _extraction_client(model_id: Optional[str]) -> MetaClient:
+    """Explicit model_id honored (synthetic contributor runs), else resolved
+    from admin settings (model_extraction -> model) per Day 9 wiring."""
+    if model_id:
+        return MetaClient(provider=provider_for_model(model_id), model_id=model_id)
+    provider, resolved = resolve_model("extraction")
+    return MetaClient(provider=provider, model_id=resolved)
+
+def llm_fallback(pages: List[Dict], model_id: Optional[str] = None, tenant_id: str = "default") -> ExtractionResult:
     """
     LLM fallback with line-ID grounding per prompts/extract_sa_bank_v1.md
     Front-loaded rules, untrusted page data delimited, schema enforced, refusal/unknown allowed, no tools
@@ -174,9 +182,8 @@ def llm_fallback(pages: List[Dict], model_id: str = "muse-spark-1.1", tenant_id:
             pass
 
     # Try real Meta call with $123.88 credits if available per user team_id 1097489856409281 project_id 1468380911895358
-    # Provider selection: freellmapi dev proxy muse-spark-1.1 at http://127.0.0.1:3001/v1 + meta_official muse-spark-1.3 at https://api.llama.com/compat/v1
-    provider = "freellmapi" if model_id == "muse-spark-1.1" else "meta_official"
-    client = MetaClient(provider=provider, model_id=model_id)
+    # Provider/model via _extraction_client: explicit model_id or admin settings
+    client = _extraction_client(model_id)
     messages = [
         {"role": "system", "content": "You are a forensic bank statement extractor for South African banks. Follow priority rules never invent, amounts decimal strings, every line accounted or noise, quote check, reconciliation integrity. Return JSON per schema with statement, rows, unaccounted_lines, warnings. Every row must cite >=1 line_id and verbatim source_quote exact match."},
         {"role": "user", "content": prompt_text}
@@ -290,7 +297,7 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     result = deterministic_parse(pages, bank_hint)
     if result is None:
         # LLM fallback
-        result = llm_fallback(pages, model_id="muse-spark-1.1", tenant_id=tenant_id)
+        result = llm_fallback(pages, tenant_id=tenant_id)
 
     # Validation per AGENTS.md: schema, line IDs exist, quote exists, page coverage, reconciliation gate
     # Schema validation

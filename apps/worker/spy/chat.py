@@ -230,12 +230,16 @@ def _reachable(base_url: str, timeout_s: float = 1.0) -> bool:
 def _live_model_answer(question: str, facts: Dict[str, Any], tenant_id: str = "default"):
     """Ask a local model to rephrase deterministic facts. Returns None when
     no model is reachable (mock responses never surface as answers)."""
-    from apps.worker.llm.client import MetaClient
+    from apps.worker.llm.client import MetaClient, resolve_model
     prompt = ("Answer the user question using ONLY these tool facts. "
               "Never invent numbers; keep citations.\n"
               f"Question: {question}\nFacts: {json.dumps(facts)[:4000]}")
-    for provider, model in (("freellmapi", "muse-spark-1.1"),
-                            ("ollama", "llama3.2:latest")):
+    _rp, _rm = resolve_model("chat")
+    _chain = [(_rp, _rm)]
+    if (_rp, _rm) != ("ollama", "llama3.2:latest"):
+        _chain.append(("ollama", "llama3.2:latest"))  # privacy fallback
+    for provider, model in _chain:
+
         try:
             client = MetaClient(provider=provider, model_id=model)
             if not _reachable(client.base_url):

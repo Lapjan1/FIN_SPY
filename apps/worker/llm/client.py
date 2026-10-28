@@ -24,7 +24,7 @@ class ModelResult:
     content: str
     reasoning: Optional[str] = None
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    usage: Dict[str, int] = field(default_factory=dict)
+    usage: Dict[str, Any] = field(default_factory=dict)
     finish_reason: str = "stop"
     model_id: str = ""
 
@@ -144,3 +144,47 @@ def prompt_hash(prompt_path: str) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
 
 from pathlib import Path
+
+# Model wiring (Day 9): ONE place mapping admin selection to (provider, model).
+# Reads model_{purpose} -> model -> model_default (env first, settings table
+# second via env_or_setting). Keys stay env-only; only non-secret selection
+# lives in the settings table (admin UI saves `model` + `effort`).
+MODEL_PROVIDERS: Dict[str, str] = {
+    "muse-spark-1.1": "freellmapi",
+    "auto": "freellmapi",
+    "muse-spark-1.3": "meta_official",
+    "muse-spark-1.3-contributor": "meta_official",
+    "muse-wonder-1.0": "meta_official",
+    "muse-image-1.0": "meta_official",
+    "llama3.2:latest": "ollama",
+    "qwen2.5:7b": "ollama",
+}
+DEFAULT_PROVIDER = "freellmapi"
+DEFAULT_MODEL = "muse-spark-1.1"
+
+
+def provider_for_model(model_id: str) -> str:
+    """Derive provider from a model id; unknown ids stay on the dev proxy."""
+    return MODEL_PROVIDERS.get((model_id or "").strip(), DEFAULT_PROVIDER)
+
+
+def resolve_model(purpose: str = "extraction") -> tuple:
+    """Return (provider, model_id) for a purpose.
+
+    Contributor tier is NEVER resolved from settings/env - real documents
+    must not train on contributor (AGENTS.md pitfall). Contributor runs are
+    explicit-code-only (synthetic tests pass model_id directly)."""
+    from apps.api.db import env_or_setting
+    model = (env_or_setting(f"model_{purpose}", "")
+             or env_or_setting("model", "")
+             or env_or_setting("model_default", "")
+             or DEFAULT_MODEL).strip()
+    if "contributor" in model:
+        model = DEFAULT_MODEL  # fail-closed to the safe dev default
+    return provider_for_model(model), model
+
+
+def get_client(purpose: str = "extraction") -> MetaClient:
+    """MetaClient built from resolved admin selection for a purpose."""
+    provider, model_id = resolve_model(purpose)
+    return MetaClient(provider=provider, model_id=model_id)

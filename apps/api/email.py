@@ -1,17 +1,17 @@
 """
-Email service abstraction - Resend free tier per homework Part 5.14 + clearmind SMTP pattern
+Email service abstraction - Resend free tier per homework Part 5.14 + SMTP fallback
 Per user question: Do we need mailback service/no-reply mail for login? YES for production grade
 
-Clearmind pattern: app.py:31-54 send_email() SMTP_HOST/PORT/USER/PASS/FROM via smtplib.SMTP starttls timeout 10s, welcome email app.py:185-191, reset link forgot_password.html:10-14 shows link openly (security leak)
+SMTP fallback: send_email() via SMTP_HOST/PORT/USER/PASS/FROM with smtplib.SMTP starttls timeout 10s; welcome + reset templates; reset links emailed, never shown openly
 
 FIN_SPY upgrade:
 - Resend free tier per homework Part 5.14 + Part 6: Resend or Postmark free tier, Supabase SMTP alternative
-- Env: EMAIL_API_KEY worker only never browser per AGENTS.md Never commit secrets, EMAIL_FROM=noreply@fin-spy.example, SMTP_HOST etc fallback clearmind pattern env_or_setting
+- Env: EMAIL_API_KEY worker only never browser per AGENTS.md Never commit secrets, EMAIL_FROM=noreply@fin-spy.example, SMTP_HOST etc fallback via env_or_setting
 - Service: send_email(to, subject, body, html=None) tries Resend API POST https://api.resend.com/emails Bearer key, if no key logs to console + audit_log, never exposes key in browser
 - Templates: welcome, reset with token 1h expiry, payment_failed dunning 7 days read-only
 - No-reply: from noreply@fin-spy.example, reply-to support@fin-spy.example
 - Privacy: log redacted, never log body with token in production logs per AGENTS.md Never print secrets
-- For hackathon demo, can return reset_token directly in API response like clearmind did (dev mode), prod emails
+- For hackathon demo, can return reset_token directly in API response (dev mode only), prod emails
 """
 import os
 import logging
@@ -30,14 +30,14 @@ def get_email_from() -> str:
 
 def send_email(to_email: str, subject: str, body: str, html: Optional[str] = None, tenant_id: str = "default") -> bool:
     """
-    Send email via Resend free tier, fallback to SMTP clearmind pattern, fallback to log if no key
+    Send email via Resend free tier, fallback to SMTP, fallback to log if no key
     Returns True if sent or logged, False on exception
     Per AGENTS.md Never print secrets, redact in logs
     """
     api_key = get_email_api_key()
     from_addr = get_email_from()
 
-    # If no API key, log and return True for dev (mock email) - like clearmind returns link openly in dev
+    # If no API key, log and return True for dev (mock email)
     if not api_key:
         log.info(f"[MOCK EMAIL] To: {to_email} Subject: {subject} From: {from_addr} Body: {body[:100]}... [REDACTED]")
         # Append audit log for email sent (without token content)
@@ -75,9 +75,9 @@ def send_email(to_email: str, subject: str, body: str, html: Optional[str] = Non
             pass
         return True
     except Exception as e:
-        log.warning(f"Resend failed {e}, trying SMTP fallback like clearmind")
+        log.warning(f"Resend failed {e}, trying SMTP fallback")
 
-    # Fallback to SMTP like clearmind app.py:31-54
+    # Fallback to SMTP
     try:
         import smtplib
         from email.message import EmailMessage

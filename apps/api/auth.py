@@ -1,6 +1,6 @@
 """
-Auth - Based on clearmind-ai/app.py:152-172 require_login/require_subscription but upgraded:
-- bcrypt not SHA256 hex (clearmind database.py:308 weak) -> use passlib[bcrypt]
+Auth - login/subscription dependencies with FIN_SPY upgrades (prior art: docs/AUTH_PAYSTACK.md):
+- bcrypt, not unsalted SHA256 hex -> use passlib[bcrypt]
 - FastAPI dependencies not Flask decorators
 - trial pages (20 free) not 5 sessions - get_trial_pages_remaining
 - reset token uuid4 hex 1h expiry, used flag, not displayed in html
@@ -16,7 +16,7 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import hmac
 
-# Use bcrypt directly - upgrade over clearmind SHA256 hex no salt
+# Use bcrypt directly - salted, never unsalted SHA256 hex
 try:
     import bcrypt
     BCRYPT_AVAILABLE = True
@@ -34,7 +34,7 @@ try:
             # Fallback for legacy SHA256
             return hashlib.sha256(plain.encode()).hexdigest() == hashed
 except ImportError:
-    # Fallback - warn but work for scaffold (clearmind pattern)
+    # Fallback - warn but work for scaffold
     BCRYPT_AVAILABLE = False
     def hash_password(pw: str) -> str:
         return hashlib.sha256(pw.encode()).hexdigest()
@@ -68,7 +68,7 @@ def get_current_user_id(request: Request) -> Optional[int]:
 
 def require_login(request: Request) -> int:
     """
-    FastAPI dependency - like clearmind @require_login but as Depends.
+    FastAPI dependency enforcing login via Depends.
     Returns user_id or raises 401.
     """
     uid = get_current_user_id(request)
@@ -88,7 +88,7 @@ def require_admin(request: Request) -> int:
         raise HTTPException(401, "User not found")
     role = user.get("role", "")
     email = user.get("email", "")
-    # Check role or ADMIN_EMAIL allowlist per clearmind app.py:56-61
+    # Check role or ADMIN_EMAIL allowlist
     admin_email = env_or_setting("admin_email", "")
     if role == "admin" or (admin_email and email.lower() == admin_email.lower()):
         return uid
@@ -135,7 +135,7 @@ def verify_user(email: str, password: str) -> Optional[int]:
         return row["id"] if isinstance(row, dict) else row[0]
     return None
 
-# Trial pages - per FIN_SPY, not clearmind 5 sessions
+# Trial pages - FIN_SPY meters pages, not sessions
 def get_document_count(user_id: int) -> int:
     db = get_db()
     cur = db.execute("SELECT COUNT(*) as cnt FROM source_documents WHERE uploaded_by=?", (user_id,))
@@ -144,7 +144,7 @@ def get_document_count(user_id: int) -> int:
 
 def get_trial_pages_remaining(user_id: int) -> Optional[int]:
     """
-    Like clearmind get_trial_remaining but for pages, not sessions.
+    Remaining trial pages for this user (None = unlimited).
     Returns None if active subscription = unlimited, else remaining pages.
     per config: free 20, individual 200, sme 1000
     """
@@ -159,13 +159,13 @@ def get_trial_pages_remaining(user_id: int) -> Optional[int]:
 
 def require_subscription(request: Request) -> int:
     """
-    Like clearmind @require_subscription but pages based.
+    Subscription guard based on trial pages.
     """
     uid = require_login(request)
     user = get_user(uid)
     if not user:
         raise HTTPException(401, "User not found")
-    # Admin bypass per clearmind
+    # Admin bypass
     db = get_db()
     admin_email = env_or_setting("admin_email", "")
     if user.get("role") == "admin" or (admin_email and user.get("email") == admin_email):
@@ -219,8 +219,8 @@ def use_reset_token(token: str, new_password: str) -> bool:
 
 def check_session_secret():
     """
-    Env guard fail-closed per ClearFlag pattern server.js - SESSION_SECRET required in prod.
-    Like clearmind FLASK_SECRET but fail-closed, not random persisted.
+    Env guard fail-closed - SESSION_SECRET required in prod.
+    Fail-closed: raise in prod when missing, never silently persist a random value.
     """
     secret = os.getenv("SESSION_SECRET")
     env = os.getenv("ENVIRONMENT", "development")

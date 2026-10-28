@@ -1,12 +1,12 @@
 """
 FastAPI API - DB-first: Extract -> persist to .db -> all products read from DB.
 Per AGENTS.md commands: uv run fastapi dev apps/api/main.py --port 8000
-Adapted from clearmind-ai patterns: Dual DB, require_login/require_subscription, Paystack timing-safe, trial pages.
+Auth, dual DB, Paystack and trial-page flows follow prior-art research (see docs/AUTH_PAYSTACK.md) with FIN_SPY upgrades:
 
-Clearmind pattern reuse (read, not copy):
-- Dual SQLite/Postgres via db.py is_postgres() + _translate (clearmind database.py:6-87)
-- require_login/require_subscription dependencies (clearmind app.py:152-172) but FastAPI Depends + bcrypt upgrade
-- Paystack initialize/verify/webhook (clearmind app.py:63-360) + ClearFlag timingSafeEqual
+Pattern notes:
+- Dual SQLite/Postgres via db.py is_postgres() + _translate
+- require_login/require_subscription as FastAPI Depends + bcrypt
+- Paystack initialize/verify/webhook with timing-safe signature compare
 - POPIA privacy templates route
 
 DB-first: Every write goes to .db before next step, audit_log hash-chain SHA256(prev||canonical_json) per AGENTS.md
@@ -36,7 +36,7 @@ from .paystack import (
 app = FastAPI(
     title="FIN_SPY API",
     version="0.1.0",
-    description="Financial Surveillance & Peak Insights - DB-first forensic books + spy + KPIs + debt strategies. Built with Meta Muse. Auth + Paystack + trial pages adapted from clearmind-ai."
+    description="Financial Surveillance & Peak Insights - DB-first forensic books + spy + KPIs + debt strategies. Built with Meta Muse."
 )
 
 app.add_middleware(
@@ -47,11 +47,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Init DB on startup like clearmind app.py:14 init_paystack_db()
+# Init DB on startup (tables + Paystack columns)
 @app.on_event("startup")
 def startup():
     init_db()
-    # Check session secret fail-closed like ClearFlag server.js
+    # Check session secret fail-closed in production
     try:
         check_session_secret()
     except RuntimeError as e:
@@ -158,7 +158,7 @@ def fingerprint_txn(date: str, amount_minor: int, desc_norm: str) -> str:
     canonical = f"{date}|{amount_minor}|{desc_norm.lower().strip()}"
     return hashlib.sha256(canonical.encode()).hexdigest()
 
-# --- Auth Routes (clearmind pattern) ---
+# --- Auth Routes ---
 @app.post("/v1/auth/register")
 def register(inp: RegisterIn):
     uid = create_user(inp.email, inp.password, inp.name, inp.tenant_id)
@@ -193,7 +193,7 @@ def forgot(inp: ForgotIn):
         if get_email_api_key():
             return {"sent": True}  # prod: token emailed, never returned
         return {"sent": True, "reset_token": token, "note": "Dev mode (no email key): token returned for testing."}
-    # Always return sent true to avoid user enumeration (clearmind does)
+    # Always return sent=true to avoid user enumeration
     return {"sent": True}
 
 @app.post("/v1/auth/reset")
@@ -209,11 +209,11 @@ def me(user_id: int = Depends(require_login)):
     trial = get_trial_pages_remaining(user_id)
     return {"user": user, "trial_pages_remaining": trial, "is_trial_unlimited": trial is None}
 
-# --- Health with env guard (ClearFlag pattern server.js health/ready) ---
+# --- Health with env guard ---
 @app.get("/health")
 def health():
     db = get_db()
-    # Check REQUIRED envs per ClearFlag lib/env-check.js
+    # Check REQUIRED envs fail-closed
     required = []
     if os.getenv("ENVIRONMENT") == "production":
         if not os.getenv("SESSION_SECRET"):
@@ -222,7 +222,7 @@ def health():
 
 @app.get("/health/ready")
 def ready():
-    # Like ClearFlag /health/ready - checks DB + essential env
+    # /health/ready checks DB + essential env
     try:
         db = get_db()
         db.execute("SELECT 1")
@@ -240,7 +240,7 @@ async def upload_document(
 ):
     """
     Intake vault: hash SHA256, store content-addressed immutable, audit log hash-chain, enqueue job.
-    Requires subscription + trial pages check - clearmind require_subscription pattern.
+    Requires subscription + trial pages check.
     Handles encrypted/password protected PDFs: detect is_encrypted, try password param (from Form or X-PDF-Password header), never log/store password, audit encrypted status.
     Per AGENTS.md lethal trifecta: private data + untrusted PDF + egress never same session - password handled transiently.
     """
@@ -253,7 +253,7 @@ async def upload_document(
     db = get_db()
     tenant_id = _tenant_of(user_id)
 
-    # Trial pages check like clearmind get_trial_remaining
+    # Trial pages check
     remaining = get_trial_pages_remaining(user_id)
     if remaining is not None and remaining <= 0:
         raise HTTPException(402, "Trial pages exhausted - subscribe")
@@ -284,7 +284,7 @@ async def upload_document(
 
     # Try to open with provided password if encrypted
     password_provided = pdf_password or request.headers.get("X-PDF-Password")
-    # Also check env var pdf_password_env per clearmind pattern integration/headless_runner.py:12-14 PDF password NEVER in plan.json, resolved from OS vault var
+    # PDF password NEVER in the request body - resolved from an OS env var
     if not password_provided:
         password_provided = request.headers.get("X-PDF-Password-Env")
         if password_provided:
@@ -820,7 +820,7 @@ def get_report(report_id: str, user_id: int = Depends(require_login)):
         raise HTTPException(403, "Cross-tenant denied")
     return r
 
-# --- Billing Routes (clearmind + ClearFlag hardening) ---
+# --- Billing Routes ---
 @app.get("/v1/billing/plans")
 def billing_plans():
     return {
@@ -838,7 +838,7 @@ def billing_checkout(plan_code: str = "individual", user_id: int = Depends(requi
         raise HTTPException(404, "User not found")
     email = row["email"] if isinstance(row, dict) else row[0]
     tenant_id = row["tenant_id"] if isinstance(row, dict) else row[1]
-    # Build callback URL like clearmind url_for(..., _external=True) + ProxyFix
+    # Build absolute callback URL (proxy-aware)
     base_url = os.getenv("APP_BASE_URL", "http://127.0.0.1:8000")
     callback_url = f"{base_url}/v1/billing/callback"
     try:
@@ -851,13 +851,13 @@ def billing_checkout(plan_code: str = "individual", user_id: int = Depends(requi
 
 @app.get("/v1/billing/callback")
 def paystack_callback(trxref: str = "", reference: str = "", user_id: int = Depends(require_login)):
-    # Like clearmind /paystack/callback
+    # Paystack callback: verify + activate subscription
     ref = trxref or reference
     if not ref:
         raise HTTPException(400, "Missing reference")
     try:
         data = verify_transaction(ref)
-        # Update user per clearmind pattern
+        # Update user subscription fields
         customer_code = data.get("customer", {}).get("customer_code", "") if isinstance(data.get("customer"), dict) else data.get("customer", "")
         auth_code = data.get("authorization", {}).get("authorization_code", "") if isinstance(data.get("authorization"), dict) else ""
         db = get_db()
@@ -870,7 +870,7 @@ def paystack_callback(trxref: str = "", reference: str = "", user_id: int = Depe
 @app.post("/v1/webhooks/paystack")
 async def paystack_webhook(request: Request):
     """
-    Webhook with timing-safe verify HMAC SHA512 raw body like ClearFlag lib/env-check.js
+    Webhook with timing-safe HMAC SHA512 verify over the raw body.
     """
     raw_body = await request.body()
     signature = request.headers.get("x-paystack-signature", "")
@@ -896,7 +896,7 @@ async def paystack_webhook(request: Request):
         # Already processed - idempotent
         return {"ok": True, "dup": True}
 
-    # Handle like clearmind app.py:328-360 + ClearFlag
+    # Handle charge.success / subscription lifecycle events
     handle_webhook_event(event_type, event_data)
 
     return {"ok": True}
@@ -917,7 +917,7 @@ def get_settings(user_id: int = Depends(require_admin)):
     db = get_db()
     cur = db.execute("SELECT key, value FROM settings ORDER BY key")
     rows = cur.fetchall()
-    # Filter out secret keys - redacted, never return actual secret (clearmind plaintext bug fixed)
+    # Filter out secret keys - redacted, never return actual secret
     forbidden_substrings = ["secret", "api_key", "password", "paystack"]
     result = {}
     for r in rows:
@@ -936,10 +936,10 @@ class SettingsUpdateIn(BaseModel):
 
 @app.post("/v1/settings")
 def update_settings(inp: SettingsUpdateIn, user_id: int = Depends(require_admin)):
-    # Forbid secret keys via API per docs/SETTINGS.md - must be env var, fail-closed per ClearFlag
+    # Forbid secret keys via API per docs/SETTINGS.md - must be env var (fail-closed)
     forbidden_exact = ["meta_api_key", "paystack_secret_key", "session_secret", "paystack_public_key", "paystack_plan_code", "paystack_plan_codes_json", "flask_secret"]
     if inp.key.lower() in forbidden_exact or "secret" in inp.key.lower():
-        raise HTTPException(400, f"{inp.key} must be env var per security guide, not settings table - fail-closed per ClearFlag lib/env-check.js")
+        raise HTTPException(400, f"{inp.key} must be env var per security guide, not settings table (fail-closed)")
     # Allow only non-secret settings: model, effort, trial_pages, ollama_url, cost guards, privacy gate
     allowed_prefixes = ["model", "effort", "trial_", "ollama_url", "freellmapi_", "per_document_", "global_daily", "meta_rate_limit", "kill_switch", "show_exact", "ai_provider"]
     if not any(inp.key.lower().startswith(p) or inp.key.lower() == p for p in allowed_prefixes):
@@ -955,22 +955,22 @@ def update_settings(inp: SettingsUpdateIn, user_id: int = Depends(require_admin)
 
 @app.get("/privacy")
 def privacy():
-    # Serve real POPIA content from docs/legal/privacy.md copied from clearmind privacy.html
+    # Serve real POPIA content from docs/legal/privacy.md
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "privacy.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Privacy - POPIA compliance, see docs/legal/privacy.md"
-    return {"page": "privacy", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/privacy.html", "content_markdown": content[:5000], "full_path": str(doc_path), "compliance": "POPIA", "storage": "Railway/Supabase isolated by tenant_id+user_id", "ai_disclosure": "Meta standard tier no training, contributor only synthetic", "retention": "30 days deletion, legal_hold flag blocks deletion"}
+    return {"page": "privacy", "last_updated": "2026-10-26", "source": "docs/legal/privacy.md", "content_markdown": content[:5000], "full_path": str(doc_path), "compliance": "POPIA", "storage": "Railway/Supabase isolated by tenant_id+user_id", "ai_disclosure": "Meta standard tier no training, contributor only synthetic", "retention": "30 days deletion, legal_hold flag blocks deletion"}
 
 @app.get("/terms")
 def terms():
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "terms.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Terms"
-    return {"page": "terms", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/terms.html", "content_markdown": content[:5000], "billing": "Free 20 pages R0, Individual 200 R149/mo, SME 1000 R599/mo", "law": "South Africa", "ai_disclosure": "court-ready per ECTA s15, not guaranteed"}
+    return {"page": "terms", "last_updated": "2026-10-26", "source": "docs/legal/terms.md", "content_markdown": content[:5000], "billing": "Free 20 pages R0, Individual 200 R149/mo, SME 1000 R599/mo", "law": "South Africa", "ai_disclosure": "court-ready per ECTA s15, not guaranteed"}
 
 @app.get("/refund")
 def refund():
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "refund.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Refund"
-    return {"page": "refund", "last_updated": "2026-10-26", "source": "Adapted from clearmind-ai/templates/refund.html", "content_markdown": content[:5000], "free_trial": "20 pages", "exception": ">48h downtime pro-rata"}
+    return {"page": "refund", "last_updated": "2026-10-26", "source": "docs/legal/refund.md", "content_markdown": content[:5000], "free_trial": "20 pages", "exception": ">48h downtime pro-rata"}
 
 @app.get("/ai-disclosure")
 def ai_disclosure():

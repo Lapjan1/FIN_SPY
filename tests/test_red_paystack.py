@@ -1,6 +1,6 @@
 """
 Red tests for paystack - ensure fails for right reasons: invalid sig, missing secret, duplicate webhook, unconfigured.
-Per AGENTS.md evidence before synthesis, ClearFlag timingSafeEqual.
+Per AGENTS.md evidence before synthesis; timing-safe webhook verify.
 """
 import hmac
 import hashlib

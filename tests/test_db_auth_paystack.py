@@ -1,5 +1,5 @@
 """
-Test DB + Auth + Paystack adapter - based on clearmind pattern but improved
+Test DB + Auth + Paystack adapter (prior art documented in docs/AUTH_PAYSTACK.md)
 Per AGENTS.md run before every commit: uv run pytest -q
 """
 import hashlib

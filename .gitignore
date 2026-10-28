@@ -65,6 +65,7 @@ uv.lock
 
 # FIN_SPY specific
 data/vault/
+data/reports/
 data/*.db
 data/samples/*.pdf
 !data/samples/.gitkeep

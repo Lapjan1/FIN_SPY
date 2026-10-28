@@ -1,5 +1,5 @@
 # For local full stack - optional, MVP uses SQLite local files per AGENTS.md
-# Railway handles prod deploy per homework Part 5.14 + clearmind pattern + ClearFlag render.yaml healthCheckPath
+# Railway handles prod deploy per homework Part 5.14 (healthcheck /health/ready)
 # Unified dsh-local project C:\Users\dshan\Downloads\Projects\DeepSH\local-stack\docker-compose.yml owns freellmapi, 9router, books-db external volumes
 version: "3.8"
 services:
@@ -40,7 +40,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-  # Optional: add Postgres for prod path like clearmind DATABASE_URL + DeepSH external volume
+  # Optional: add Postgres for prod path via DATABASE_URL
   # postgres:
   #   image: postgres:17
   #   environment:

@@ -1,5 +1,5 @@
 # Dockerfile for FIN_SPY API - Railway deployment for Paystack live URL proof
-# Per clearmind pattern + DeepSH external volumes, loopback 127.0.0.1 binding dev but 0.0.0.0 prod
+# Loopback 127.0.0.1 binding dev but 0.0.0.0 prod
 FROM python:3.12-slim
 
 WORKDIR /app

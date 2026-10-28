@@ -1,10 +1,10 @@
 """
-Paystack adapter - Based on clearmind-ai/app.py:63-360 + ClearFlag/routes/paystack.js hardening
+Paystack adapter - initialize/verify/webhook with timing-safe hardening (prior art: docs/AUTH_PAYSTACK.md)
 - env_or_setting pattern (env overrides DB)
-- has_paystack() checks sk_test|sk_live (bug fix from clearmind PROJECT_NOTES.md:52)
-- Checkout initialize 37000 ZAR clearmind vs FIN_SPY 14900/59900, callback verify, webhook with timingSafeEqual
-- Plan mapping free 20 pages / individual 200 / sme 1000 (vs clearmind 5 sessions)
-- Timing-safe verify via hmac.compare_digest per ClearFlag lib, not plain ==
+- has_paystack() checks sk_test|sk_live
+- Checkout initialize 14900/59900 minor units, callback verify, webhook with timing-safe compare
+- Plan mapping free 20 pages / individual 200 / sme 1000
+- Timing-safe verify via hmac.compare_digest, not plain ==
 
 Per AGENTS.md: PAYSTACK_SECRET_KEY worker? Actually api only, never in browser.
 Webhook verifies x-paystack-signature HMAC SHA512 raw body, idempotent via webhook_events.
@@ -26,7 +26,7 @@ def get_paystack_pk() -> str:
     return env_or_setting('paystack_public_key', '')
 
 def get_paystack_plan_individual() -> str:
-    # FIN_SPY plans JSON or single codes - support both clearmind style and new JSON
+    # FIN_SPY plans JSON or single codes - support both
     plans_json = env_or_setting('paystack_plan_codes_json', '')
     if plans_json:
         try:
@@ -43,7 +43,7 @@ def get_paystack_plans() -> Dict[str, str]:
             return json.loads(raw)
         except:
             pass
-    # Fallback to single plan code like clearmind
+    # Fallback to single plan code
     single = env_or_setting('paystack_plan_code', '')
     if single:
         return {"individual": single}
@@ -55,7 +55,7 @@ def has_paystack() -> bool:
 
 def plan_key_from_paystack_code(code: str) -> str:
     """
-    Map Paystack plan code to internal plan_key, like ClearFlag lib/plans.js planKeyFromPaystackCode
+    Map Paystack plan code to internal plan_key.
     """
     plans = get_paystack_plans()
     for k, v in plans.items():
@@ -71,7 +71,7 @@ def plan_key_from_paystack_code(code: str) -> str:
 def plan_details(plan_code: str) -> Dict:
     """
     FIN_SPY plans per docs/decision 0001: free 20 pages, individual 200, sme 1000
-    vs clearmind 5 sessions R370
+
     """
     mapping = {
         "free": {"name": "Free", "pages": 20, "amount_minor": 0, "price_display": "R0"},
@@ -83,7 +83,7 @@ def plan_details(plan_code: str) -> Dict:
 
 def verify_paystack_signature(payload: bytes, signature: str, secret: str) -> bool:
     """
-    Timing-safe verify per ClearFlag/routes/paystack.js verifyPaystackSignature
+    Timing-safe webhook signature verify.
     Uses HMAC SHA512 of raw body with secret key, constant time compare.
     """
     if not signature or not secret:
@@ -94,7 +94,7 @@ def verify_paystack_signature(payload: bytes, signature: str, secret: str) -> bo
 
 def initialize_transaction(email: str, plan_code: str, callback_url: str, user_id: int, tenant_id: str) -> Dict:
     """
-    Like clearmind app.py:253-281 /subscribe
+    Initialize a Paystack checkout transaction.
     """
     details = plan_details(plan_code)
     # If free plan, no paystack needed - return early before has_paystack check per red test
@@ -157,7 +157,7 @@ def _maybe_send_dunning(event_type: str, user, tenant_id: str) -> None:
 
 def handle_webhook_event(event_type: str, event_data: Dict) -> Optional[str]:
     """
-    Like clearmind app.py:328-360 + ClearFlag paystack.js
+    Verify + dispatch a Paystack webhook event.
     Handles charge.success, subscription.create, invoice.success, subscription.disable
     Returns tenant_id/user_id affected for audit
     """
@@ -210,7 +210,7 @@ def handle_webhook_event(event_type: str, event_data: Dict) -> Optional[str]:
             p_code = event_data["plan"].get("plan_code") or event_data["plan"].get("code","")
             plan_code = plan_key_from_paystack_code(p_code)
 
-        # Upsert subscription like ClearFlag upsertSubscription
+        # Upsert subscription row
         # Update user
         db.execute(
             "UPDATE users SET paystack_customer_code=?, paystack_subscription_code=?, paystack_authorization_code=?, subscription_status='active' WHERE id=?",
@@ -229,7 +229,7 @@ def handle_webhook_event(event_type: str, event_data: Dict) -> Optional[str]:
 
     elif "deactivated" in event_type or "failed" in event_type or event_type in ("subscription.disable", "invoice.payment_failed"):
         _maybe_send_dunning(event_type, user, tenant_id)
-        # Set free + reset usage on renewal failure? ClearFlag resets builds_used on renewal, we set status free on disable
+        # On disable: set status free; usage counters reset on renewal
         if "disable" in event_type:
             db.execute("UPDATE users SET subscription_status='free' WHERE id=?", (user_id,))
             # Find subscription

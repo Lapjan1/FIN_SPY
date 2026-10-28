@@ -20,7 +20,7 @@ export default function SettingsPage() {
     }).catch(()=>{});
     // Fetch settings admin-only
     fetch(`${API_BASE}/v1/settings`,{headers:{'X-User-Id':userId}}).then(r=>r.json()).then(data=>{
-      if(data.detail) { setMsg('Not admin - settings admin-only per clearmind pattern'); setIsAdmin(false); return; }
+      if(data.detail) { setMsg('Not admin - settings are admin-only'); setIsAdmin(false); return; }
       setSettings(data); setIsAdmin(true);
       if(data.model) setModel(data.model);
       if(data.effort) setEffort(data.effort);
@@ -31,7 +31,7 @@ export default function SettingsPage() {
     // POST /v1/settings admin-only, forbids secret keys per docs/SETTINGS.md
     const forbidden = ['meta_api_key','paystack_secret_key','session_secret','paystack_public_key'];
     if(forbidden.includes(key.toLowerCase())) {
-      setMsg(`Reject 400: ${key} must be env var per security guide, not DB table - fail-closed per ClearFlag`);
+      setMsg(`Reject 400: ${key} must be an env var per security guide, not a DB table (fail-closed)`);
       return;
     }
     const res = await fetch(`${API_BASE}/v1/settings`,{method:'POST',headers:{'Content-Type':'application/json','X-User-Id':userId},body:JSON.stringify({key,value})});
@@ -43,12 +43,12 @@ export default function SettingsPage() {
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">Settings - Meta Models Compliance (Admin Only)</h1>
-      <p className="text-sm text-slate-400">Adapted from clearmind settings.html ai_provider openai|ollama model phi4/llama3.2 ollama_url openai_api_key plaintext risky. FIN_SPY: admin-only for keys (***REDACTED*** + last4, type password), user-visible read-only for model/effort/cost, no openai phi4, ollama-local only privacy fallback, freellmapi active badge + meta pending warning, per docs/SETTINGS.md hackathon guidelines.</p>
+      <p className="text-sm text-slate-400">Admin-only for keys (***REDACTED*** + last4, type password), user-visible read-only for model/effort/cost. Ollama-local only as privacy fallback, freellmapi active badge + meta pending warning.</p>
 
       <div className="border border-slate-800 rounded p-4 space-y-2">
         <label className="text-xs">X-User-Id (dev auth, use admin id 1):</label>
         <input className="w-full p-2 bg-slate-900 border border-slate-700 rounded" value={userId} onChange={e=>setUserId(e.target.value)} />
-        <div className="text-xs">IsAdmin: {isAdmin?'Yes (role admin or ADMIN_EMAIL allowlist)':'No - settings admin-only per clearmind app.py:667-668'}</div>
+        <div className="text-xs">IsAdmin: {isAdmin?'Yes (role admin or ADMIN_EMAIL allowlist)':'No - settings are admin-only'}</div>
         <div className="flex gap-2">
           <span className="px-2 py-1 bg-green-900 text-green-300 rounded text-xs">freellmapi dev active - http://127.0.0.1:3001/v1 (278 models) per local_services.yaml</span>
           <span className="px-2 py-1 bg-yellow-900 text-yellow-300 rounded text-xs">meta_official pending - META_API_KEY expected 1-2 days Cerebral Valley per STATE.md Blocked</span>
@@ -68,10 +68,10 @@ export default function SettingsPage() {
       </div>
 
       <div className="border border-slate-800 rounded p-4 space-y-3">
-        <h3 className="font-semibold">Env Guards (ClearFlag pattern) + Privacy Gate</h3>
+        <h3 className="font-semibold">Env Guards + Privacy Gate</h3>
         <div className="text-xs space-y-1">
           <div>REQUIRED fail-closed: SESSION_SECRET, DATABASE_URL, META_API_KEY worker only - never in settings table, must be env var per docs/SETTINGS.md</div>
-          <div>OPTIONAL env_or_setting: FREELLMAPI_API_KEY, OLLAMA_BASE_URL, PAYSTACK_SECRET_KEY api only, ADMIN_EMAIL allowlist, APP_BASE_URL for Paystack callback_url _external like clearmind ProxyFix</div>
+          <div>OPTIONAL env_or_setting: FREELLMAPI_API_KEY, OLLAMA_BASE_URL, PAYSTACK_SECRET_KEY api only, ADMIN_EMAIL allowlist, APP_BASE_URL for the Paystack callback URL</div>
           <div>Privacy Gate: show_exact_text_before_hosted=true per config/models.yaml, local-first per Flowchart #2, audit_log hash-chain</div>
           <div>Forbidden keys via POST: meta_api_key, paystack_secret_key, session_secret, paystack_public_key must be env var - if attempted 400 per security guide hooks outside sandbox</div>
         </div>
@@ -80,7 +80,7 @@ export default function SettingsPage() {
       <div className="border border-slate-800 rounded p-4">
         <h3 className="font-semibold">Current Settings (admin-only, redacted secrets)</h3>
         <pre className="bg-slate-900 p-2 rounded text-xs whitespace-pre-wrap">{JSON.stringify(settings,null,2)}</pre>
-        <p className="text-xs mt-2 text-slate-500">Clearmind had plaintext value={'{{ openai_api_key }}'} risky. FIN_SPY: redacted ***REDACTED*** + last4, input type password, never value from API for secret keys.</p>
+        <p className="text-xs mt-2 text-slate-500">Secrets shown redacted (***REDACTED*** + last4), input type password, never returned from the API for secret keys.</p>
       </div>
 
       <pre className="bg-slate-900 p-4 rounded text-xs whitespace-pre-wrap">{msg}</pre>

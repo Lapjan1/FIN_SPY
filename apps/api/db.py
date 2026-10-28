@@ -1,14 +1,14 @@
 """
-DB adapter - Dual SQLite/Postgres per clearmind pattern + forensic hash-chain audit.
-Based on clearmind-ai/database.py:103 dual support, but upgraded: bcrypt, RLS guard, hash-chain audit_log, tenant isolation.
+DB adapter - dual SQLite/Postgres + forensic hash-chain audit.
+Prior art: docs/AUTH_PAYSTACK.md. Upgraded: bcrypt, RLS guard, hash-chain audit_log, tenant isolation.
 
 Usage:
     from apps.api.db import get_db, init_db, is_postgres, DbHandle
 
 Design:
-- is_postgres() checks DATABASE_URL env (clearmind pattern)
+- is_postgres() checks DATABASE_URL env
 - DbHandle translates ? -> %s, datetime('now') -> LOCALTIMESTAMP/CURRENT_DATE, INSERT OR REPLACE -> ON CONFLICT, INTEGER PK AUTOINCREMENT -> SERIAL
-- WAL mode + foreign_keys ON for SQLite concurrency per clearmind
+- WAL mode + foreign_keys ON for SQLite concurrency
 - Tables: tenants, users (paystack cols), documents (content-hash vault), pages, extraction_runs, source_spans, transactions (fingerprint), transaction_sources, classifications, accounts, journal_entries/lines (debits=credits), flags, audit_log hash-chained prev_hash/row_hash SHA256(prev||canonical_json), reports, subscriptions, usage_events, webhook_events, reset_tokens, settings
 - All tables have tenant_id + RLS/isolation guard, append-only audit_log revokes UPDATE/DELETE from app role
 """
@@ -39,7 +39,7 @@ class DbHandle:
             self.cursor_factory = psycopg2.extras.RealDictCursor
         else:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            # check_same_thread=False for FastAPI TestClient multi-thread per clearmind pattern + threading issue fix
+            # check_same_thread=False for FastAPI TestClient multi-thread + threading issue fix
             self.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
             self.conn.execute("PRAGMA journal_mode=WAL;")
@@ -51,7 +51,7 @@ class DbHandle:
             return sql
         # ? -> %s
         sql = sql.replace("?", "%s")
-        # datetime('now') handling - clearmind pattern
+        # datetime('now') handling for SQLite/Postgres translate
         sql = sql.replace("datetime('now')", "LOCALTIMESTAMP")
         sql = sql.replace('datetime("now")', "LOCALTIMESTAMP")
         sql = sql.replace("date('now')", "CURRENT_DATE")
@@ -107,7 +107,7 @@ class DbHandle:
 
     def executescript(self, sql: str):
         if self.backend == "pg":
-            # Split by ; like clearmind. Trigger DDL is sqlite-only: pg skips
+            # Split by ;. Trigger DDL is sqlite-only: pg skips
             # it (app-level post_transaction validation covers pg instead).
             # Each statement runs independently with loud warnings so one bad
             # view/trigger can never take down boot again (Oct28 crash).
@@ -155,7 +155,7 @@ def get_db() -> DbHandle:
 
 def init_db():
     db = get_db()
-    # Core schema - per docs Appendix A + clearmind tables
+    # Core schema - per docs Appendix A
     db.executescript("""
     CREATE TABLE IF NOT EXISTS tenants (
         id TEXT PRIMARY KEY,
@@ -651,7 +651,7 @@ def init_db():
     END;
 
     """)
-    # Migrations per clearmind pattern
+    # Migrations via ALTER TABLE (idempotent, IF NOT EXISTS style checks)
     _ensure_schema(db)
     # Ensure indexes for existing DBs (IF NOT EXISTS handles)
     _ensure_indexes(db)
@@ -967,7 +967,7 @@ def cleanup_tenant(tenant_id: str):
     db.commit()
 
 def _ensure_schema(db: DbHandle):
-    # Paystack cols added via ALTER like clearmind database.py:210
+    # Paystack cols added via ALTER TABLE
     # Plus account_number per bank account per user question: each account number should have its own ledger (not own DB, but own account row + unique constraint per tenant)
     cols_to_add = [
         ("users", "paystack_customer_code", "TEXT DEFAULT ''"),

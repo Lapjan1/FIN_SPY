@@ -29,7 +29,7 @@ export default function MetaModelSelector({ currentModel, effort, onChange }: { 
   return (
     <div className="border border-slate-800 rounded p-4 bg-slate-900 space-y-3">
       <h3 className="font-semibold">Meta Models - Competition Compliant (per docs/SETTINGS.md)</h3>
-      <p className="text-xs text-slate-400">Clearmind had openai/ollama phi4 - FIN_SPY pure Meta per hackathon rules: Spark series, Wonder, Image, SAM 3.1 via Meta Model API + open-weights Baseten/Modal + Muse Code. Ollama-local only as privacy fallback per Flowchart #2 local-first.</p>
+      <p className="text-xs text-slate-400">FIN_SPY is pure Meta per hackathon rules: Spark series, Wonder, Image, SAM 3.1 via Meta Model API + open-weights Baseten/Modal + Muse Code. Ollama-local only as privacy fallback (local-first).</p>
       
       <div className="flex gap-2 flex-wrap">
         {MODELS.map(m=>(

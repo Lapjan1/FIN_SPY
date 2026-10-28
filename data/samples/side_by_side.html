@@ -44,39 +44,61 @@ h2 { color: #38bdf8; }
 </div>
 <div class="right">
 <h2>🔍 Extraction (Right) - DB-first</h2>
-<p>Statement: {'bank': None, 'account_mask': None, 'period_start': None, 'period_end': None, 'currency': 'ZAR', 'opening_balance': None, 'closing_balance': None}</p>
-<p>Opening: None Closing: None Warnings: ['LLM fallback mock - implement real Meta call']</p>
+<p>Statement: {'bank': 'FNB', 'account_mask': None, 'period_start': None, 'period_end': None, 'currency': 'ZAR', 'opening_balance': '12340.55', 'closing_balance': '20790.55'}</p>
+<p>Opening: 1234055 Closing: 2079055 Warnings: []</p>
 
 <h3>Reconciliation Gate - Totals +/- == Balance Top->Bottom + Bottom->Top</h3>
-<div class="fail">
-  <p><strong>Overall:</strong> fail - FAIL</p>
-  <p>Top->Bottom: Opening or closing None - skip gate per Appendix A reconciliation na</p>
-  <p>Bottom->Top: Opening or closing None - skip reverse gate</p>
+<div class="pass">
+  <p><strong>Overall:</strong> pass - PASS</p>
+  <p>Top->Bottom: Pass: opening 1234055 + sum 845000 = computed 2079055 vs closing 2079055 diff 0 within tolerance 100</p>
+  <p>Bottom->Top: Pass reverse bottom->top: closing 2079055 - sum 845000 = computed opening 1234055 vs actual opening 1234055 diff 0</p>
   <p>Running Top->Bottom: PASS []</p>
   <p>Running Bottom->Top: PASS []</p>
-  <p>Duplicates: FAIL [{'type': 'exact_duplicate', 'line_ids': ['L002'], 'dup_of': ['L001'], 'fingerprint': 'f2c6ac2732bc3fa893612d4bfb592e759ee9d6afbfe8c4fc61db17add85c068d'}]</p>
-  <p>Totals Check: opening None + sum = closing None pass=True | closing None - sum = opening None pass=True</p>
+  <p>Duplicates: PASS []</p>
+  <p>Totals Check: opening 1234055 + sum = closing 2079055 pass=True | closing 2079055 - sum = opening 1234055 pass=True</p>
   <p><em>Totals +/- == balance from top to bottom and from bottom to top per user question - both directions must match within 1 Rand tolerance</em></p>
 </div>
 
 <h3>Extracted Transactions - Each cites line_ids + source_quote</h3>
 
 <div class='transaction'>
-  <div><span class='line-id'>L001</span> <strong>2026-10-26</strong> LLM Fallback Mock <span class='debit'>R100.00 debit</span> Balance: R0.00</div>
-  <div class='bbox'>Source Quote: "FNB Statement - Account 123456789 - Branch 250655"</div>
-  <div>Fingerprint: fb6ab21c943a3e6e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L005</span> <strong>2026-10-25</strong> WOOLWORTHSCTR450,00-R11890,55 <span class='debit'>R450.00 debit</span> Balance: R11890.55</div>
+  <div class='bbox'>Source Quote: "25 Oct 2026 WOOLWORTHS CT R450,00- R11 890,55"</div>
+  <div>Fingerprint: 67db7e01e5d0c94a... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <div class='transaction'>
-  <div><span class='line-id'>L002</span> <strong>2026-10-26</strong> LLM Fallback Mock <span class='debit'>R100.00 debit</span> Balance: R0.00</div>
-  <div class='bbox'>Source Quote: "Period: 01 Oct 2026 to 31 Oct 2026"</div>
-  <div>Fingerprint: fb6ab21c943a3e6e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L006</span> <strong>2026-10-26</strong> RENTDEBNAMPROPERTYR5000,00-R6890,55 <span class='debit'>R5000.00 debit</span> Balance: R6890.55</div>
+  <div class='bbox'>Source Quote: "26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00- R6 890,55"</div>
+  <div>Fingerprint: a48c408b2412d0d7... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+</div>
+
+<div class='transaction'>
+  <div><span class='line-id'>L007</span> <strong>2026-10-27</strong> SALARYABCCORPR15000,00+R21890,55 <span class='credit'>R15000.00 credit</span> Balance: R21890.55</div>
+  <div class='bbox'>Source Quote: "27 Oct 2026 SALARY - ABC CORP R15 000,00+ R21 890,55"</div>
+  <div>Fingerprint: 897c5b34137b8b2e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+</div>
+
+<div class='transaction'>
+  <div><span class='line-id'>L008</span> <strong>2026-10-28</strong> SHELLFUELR800,00-R21090,55 <span class='debit'>R800.00 debit</span> Balance: R21090.55</div>
+  <div class='bbox'>Source Quote: "28 Oct 2026 SHELL FUEL R800,00- R21 090,55"</div>
+  <div>Fingerprint: 97b16b1fd0688daa... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+</div>
+
+<div class='transaction'>
+  <div><span class='line-id'>L009</span> <strong>2026-10-29</strong> VODACOMR300,00-R20790,55 <span class='debit'>R300.00 debit</span> Balance: R20790.55</div>
+  <div class='bbox'>Source Quote: "29 Oct 2026 VODACOM R300,00- R20 790,55"</div>
+  <div>Fingerprint: 5a661e21ed7330a0... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <h3>Unaccounted Lines</h3>
 <ul>
-<li>L003: noise</li>
-<li>L004: noise</li>
+<li>L001: header</li>
+<li>L002: header</li>
+<li>L003: opening_balance</li>
+<li>L004: header</li>
+<li>L010: closing_balance</li>
+<li>L011: header</li>
 </ul>
 </div>
 </div>

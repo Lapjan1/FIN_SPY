@@ -95,20 +95,23 @@ def test_journal_balance_constraint():
     db.execute("INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor) VALUES (?,?,?,?,?)",
                (f"line-{uuid.uuid4().hex[:6]}", entry_id, f"acc-2000-{tenant}", 0, 10000))
     db.commit()
-    # Third line that would make unbalanced should fail per trigger
+    # Day4 mechanism: post the balanced entry, then an unbalancing third line must fail per guard trigger
+    # (Old count>=2 prefix check was wrong: it also rejected legal 3-line mixed splits.)
+    db.execute("UPDATE journal_entries SET posted=1 WHERE id=?", (entry_id,))
+    db.commit()
     try:
         db.execute("INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor) VALUES (?,?,?,?,?)",
                    (f"line-{uuid.uuid4().hex[:6]}", entry_id, f"acc-3000-{tenant}", 5000, 0))
         db.commit()
-        # If we reach here, trigger didn't abort - but we allow intermediate single line, but after 3 lines sum debit 15000 vs credit 10000 should fail
-        # Actually our trigger checks when count >=2 and sum debit != sum credit -> should abort this third insert
+        # sum debit 15000 vs credit 10000 on a posted entry -> guard trigger must abort
         assert False, "Should have raised IntegrityError for unbalanced journal"
     except Exception as e:
         # Expected to fail per trigger
         assert "not balanced" in str(e).lower() or "abort" in str(e).lower() or "integrity" in str(e).lower() or True
         db.conn.rollback()
 
-    # Cleanup - delete lines first to avoid FK and trigger check, then accounts, then tenant
+    # Cleanup - unpost first (delete guard blocks removing lines from posted entries), then lines, accounts, tenant
+    db.execute("UPDATE journal_entries SET posted=0 WHERE id=?", (entry_id,))
     db.execute("DELETE FROM journal_lines WHERE entry_id=?", (entry_id,))
     db.execute("DELETE FROM journal_entries WHERE id=?", (entry_id,))
     db.execute("DELETE FROM accounts WHERE tenant_id=?", (tenant,))

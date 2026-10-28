@@ -168,6 +168,20 @@ def suggest_classification_with_merchant_memory(description: str, account_number
         }
     return None
 
+def _post_entry(entry_id: str) -> bool:
+    """Post a drafted entry: DB trigger verifies balance. Returns False + rollback on failure."""
+    db = get_db()
+    try:
+        db.execute("UPDATE journal_entries SET posted=1 WHERE id=?", (entry_id,))
+    except Exception:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        return False
+    return True
+
+
 def auto_book_journal_for_rule(transaction_id: str, rule: Dict) -> bool:
     """
     If certain code applies journal auto books other side per user question
@@ -234,5 +248,8 @@ def auto_book_journal_for_rule(transaction_id: str, rule: Dict) -> bool:
             db.execute("INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor) VALUES (?,?,?,?,?)",
                        (f"jl-{uuid.uuid4().hex[:6]}", entry_id, bank_account_id, 0, amount_minor))
 
+    # Post: DB trigger verifies balance (Day4 mechanism - draft freely, enforce at post)
+    if not _post_entry(entry_id):
+        return False
     db.commit()
     return True

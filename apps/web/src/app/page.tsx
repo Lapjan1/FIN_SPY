@@ -11,6 +11,7 @@ export default function HomePage() {
         <p className="mt-4 text-slate-400">Upload any SA bank PDF - every number traces to exact bbox, SHA256 vault + hash-chain audit, dynamic books, spy for leaks, KPI peek + debt kill plan.</p>
         <div className="mt-6 flex justify-center gap-4">
           <a href="/account" className="bg-blue-600 px-6 py-2 rounded">Upload PDF</a>
+          <a href="/review" className="border border-slate-700 px-6 py-2 rounded">Review queue</a>
           <a href="/privacy" className="border border-slate-700 px-6 py-2 rounded">See Privacy POPIA</a>
         </div>
         <p className="mt-3 text-xs text-slate-500">Built with Meta Muse Spark/Wonder/Image/SAM 3.1 - Startup track - commits during Oct26-Nov4</p>

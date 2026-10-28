@@ -15,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="border-b border-slate-800 p-4 flex justify-between items-center">
           <a href="/" className="font-bold text-xl">FIN_SPY</a>
           <div className="flex gap-4 text-sm">
+            <a href="/review">Review</a>
             <a href="/privacy">Privacy</a>
             <a href="/terms">Terms</a>
             <a href="/refund">Refund</a>

@@ -68,3 +68,22 @@ Based on homework Part 8 + previous agent plan + Clearmind pattern.
 **Planning Day:** Day2 auth (welcome + reset) + Day7 billing (payment_failed renewal) + Day9 polish (legal contact email). Add to STATE.md Next 3 steps after privacy templates: implement email service abstraction with Resend.
 
 **Evidence for hackathon:** Show email sending in logs for demo, or mock with console log + audit_log entry `auth.email.sent` with hash-chain, not token content.
+
+## True Status Audit 2026-10-28 (7-agent workflow + critic + live verification)
+
+Verdict scale: DONE = implemented + tested + critic-survived. PARTIAL = real core, named gaps. TODO = not started.
+
+- Day1 DONE - scaffold, synth PDFs, git (agent evidence TIMELINE:7-8, bundle 420126B, golden 7303B).
+- Day2 PARTIAL - vault/auth/worker/reconcile DONE+tested (main.py:209, auth.py:23, worker/main.py:26); email impl real (email.py:31-132) but ZERO call sites, register/forgot unwired, no tests/test_email*.py.
+- Day3 DONE - Lxxx+bbox+Decimal SA+both-dir gates (extractor.py:14, reconcile.py:9/28/51/72); golden 5 passed fresh 2026-10-28.
+- Day4 DONE (code) - ledger/classify/review/9999/repost/reverify (ledger.py:250/380/584/681/773/890, classify.py:197/317, audit.py:94/143); suite 130 passed; 45 files uncommitted, no Day4-titled commit yet.
+- Day5 PARTIAL - kpi.py:73 totals real; KILLED: detectors.py:13-14/43-44 return [] stubs, debt.py:42/55 TODO + main.py:515 months:12/saved:0 hardcoded, no spy/kpi/debt tests.
+- Day6 PARTIAL - dashboard API main.py:408 + settings DONE; web: review page wired, home mock KpiCards, no /dashboard, no upload/inbox routes, SourceViewer.tsx:19 react-pdf TODO, chat main.py:519 hardcoded mock string.
+- Day7 PARTIAL - powerbi reports.py:18 + auditor-csv :146 + billing HMAC :84 DONE; excel 4/10 sheets (need Appendix G 10); pack GENERATION missing (no manifest/zip builder); PAdES/TSA issue-side missing (verify_pack.py:73-78 notes only, zero pyHanko hits repo-wide).
+- Day8 TODO - Wonder/Image/SAM absent; 100RPM limiter absent; uptime.yml cron commented (manual only), ci.yml done; ruff red pre-existing (11 verified on untouched tree), pyright/tsc clean, pnpm lint unusable pre-existing.
+- Day9 PARTIAL - railway.json/nixpacks.toml/Procfile venv path done; deploy 77fef8ea SUCCESS 2026-10-28 08:56 SAST, /health 200 backend pg + /health/ready ready:true + Day4 routes 401-guarded, all verified live; web NO public domain; video MISSING; legal pages exist (privacy/terms/refund) but need live domain for Paystack reviewer.
+- Day10 TODO - no SUBMISSION doc/video, README Meta-proof pending, smoke recorded this audit (health/ready/routes), secrets check pending.
+
+EXTRAS done beyond plan (checked off): [x] tamper+encrypted+classifier (RECAP_DAY2) [x] bank registry + per-account 20/100 isolation (RECAP_DAY3) [x] 9999+repost/reverify+human-changes (RECAP_DAY4) [x] PEP668 venv fix + pg _translate boot fix + hermetic mock test + side-by-side viewer + 27-col auditor CSV + LEARN:30.
+
+NEW TODO (priority order): 1 commit Day4-titled (45 files, exclude bundle) 2 wire+test email 3 Day5 real detectors+debt amort+tests 4 web upload/inbox+/dashboard/api.ts/SourceViewer 5 excel-10+manifest builder+PAdES+TSA 6 chat real + kill auth Bearer backdoor/SHA fallback 7 100RPM+uptime cron+full gate 8 web domain + NEXT_PUBLIC_API_URL 9 video+SUBMISSION+README+secrets check.

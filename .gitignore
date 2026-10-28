@@ -88,6 +88,7 @@ vendor/
 # Misc
 coverage/
 *.zip
+*.bundle
 *.tar.gz
 !data/samples/*.zip
 .DS_Store
@@ -96,3 +97,9 @@ Thumbs.db
 *.env
 *.env.local
 config.local.json
+
+# Next.js web
+apps/web/.next/
+apps/web/next-env.d.ts
+*.tsbuildinfo
+

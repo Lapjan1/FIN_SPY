@@ -119,7 +119,11 @@ def test_reconciliation_both_directions_extraction():
     assert "bottom_to_top" in gate["totals_check"]
     assert "Totals +/- == balance from top to bottom and from bottom to top" in gate["totals_check"]["explanation"] or "top to bottom" in gate["totals_check"]["explanation"].lower()
 
-def test_llm_fallback_mock():
+def test_llm_fallback_mock(monkeypatch):
+    # Hermetic: drop the local-proxy key so this always exercises the mock
+    # path (no :3001 server, no hosted call, zero credit). Live-model
+    # coverage belongs in an integration test with an explicit model id.
+    monkeypatch.delenv("FREELLMAPI_API_KEY", raising=False)
     pages = [{
         "page_no":1,
         "width":595,

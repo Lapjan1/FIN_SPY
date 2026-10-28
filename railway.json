@@ -1,11 +1,10 @@
 {
   "$schema": "https://railway.app/railway.json",
   "build": {
-    "builder": "nixpacks",
-    "buildCommand": "pip install --upgrade pip && pip install -r requirements.txt && pip install -e . || true"
+    "builder": "nixpacks"
   },
   "deploy": {
-    "startCommand": "python -m uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "/app/.venv/bin/python -m uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT",
     "healthcheckPath": "/health/ready",
     "healthcheckTimeout": 30,
     "restartPolicyType": "always",

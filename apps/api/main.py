@@ -474,7 +474,7 @@ def review_queue(user_id: int = Depends(require_login)):
     # Get transactions that need review: status proposed with warnings, exception, needs_password, or from extraction_runs with reconciliation fail
     cur = db.execute("""
         SELECT t.id, t.txn_date, t.description_raw, t.amount_minor, t.direction, t.status, t.fingerprint_sha256,
-               d.original_filename, d.sha256 as doc_sha256, er.reconciliation, er.status as run_status
+               t.account_number, d.original_filename, d.sha256 as doc_sha256, er.reconciliation, er.status as run_status
         FROM transactions t
         JOIN source_documents d ON t.document_id = d.id
         LEFT JOIN extraction_runs er ON t.run_id = er.id
@@ -893,3 +893,561 @@ def apply_vendor_rule(rule_id: str, user_id: int = Depends(require_login)):
             pass
 
     return {"rule_id": rule_id, "matched_transactions": len(txn_rows), "applied_journals": applied, "message": f"Applied rule {rule_id} to {applied}/{len(txn_rows)} transactions, journal auto books other side per code {rule.get('target_account_id')}"}
+
+
+# --- Day4 Books: ledger-core + classify + review accept/edit (append-only revisions) ---
+class JournalPostIn(BaseModel):
+    transaction_id: str
+    category_id: Optional[str] = None
+    account_id: Optional[str] = None
+    nature: str = "business"
+    business_pct: int = 100
+
+
+class ClassifySuggestIn(BaseModel):
+    description: str
+    account_number: str
+    entity_kind: str = "personal"
+    amount_minor: Optional[int] = None
+    direction: Optional[str] = None
+
+
+class ClassifyDecideIn(BaseModel):
+    transaction_id: str
+    nature: str
+    business_pct: int = 100
+    category_id: str
+    rationale: str = ""
+    reason: str
+
+
+class ReviewAcceptIn(BaseModel):
+    nature: Optional[str] = None
+    business_pct: Optional[int] = None
+    category_id: Optional[str] = None
+    rationale: str = ""
+    reason: str
+
+
+class ReviewEditIn(BaseModel):
+    description_raw: Optional[str] = None
+    txn_date: Optional[str] = None
+    amount_minor: Optional[int] = None
+    nature: Optional[str] = None
+    business_pct: Optional[int] = None
+    category_id: Optional[str] = None
+    rationale: str = ""
+    reason: str
+
+
+def _tenant_of(user_id: int) -> str:
+    db = get_db()
+    cur = db.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    if isinstance(row, dict):
+        return row.get("tenant_id") or "default-tenant"
+    return row[0] if row else "default-tenant"
+
+
+@app.post("/v1/journal/post")
+def journal_post(inp: JournalPostIn, user_id: int = Depends(require_login)):
+    tenant_id = _tenant_of(user_id)
+    db = get_db()
+    cur = db.execute("SELECT * FROM transactions WHERE id=?", (inp.transaction_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            422,
+            f"Invalid parameters: transaction '{inp.transaction_id}' does not exist",
+        )
+    txn = dict(row) if not isinstance(row, dict) else row
+    if txn.get("tenant_id") != tenant_id:
+        raise HTTPException(403, "Cross-tenant access denied - isolation guard")
+    from .ledger import post_transaction, UnknownAccount, UnbalancedEntry
+
+    try:
+        entry = post_transaction(
+            txn,
+            {
+                "category_id": inp.category_id,
+                "account_id": inp.account_id,
+                "nature": inp.nature,
+                "business_pct": inp.business_pct,
+            },
+            created_by=user_id,
+        )
+    except UnknownAccount as e:
+        raise HTTPException(422, str(e))
+    except UnbalancedEntry as e:
+        raise HTTPException(422, f"Invalid parameters: {e}")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    append_audit_log(
+        tenant_id,
+        user_id,
+        "journal.post",
+        "journal_entries",
+        entry["id"],
+        {"transaction_id": inp.transaction_id, "category_id": inp.category_id},
+    )
+    return entry
+
+
+@app.get("/v1/journal/trial-balance")
+def journal_trial_balance(
+    as_of: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    user_id: int = Depends(require_login),
+):
+    tenant_id = _tenant_of(user_id)
+    if as_of:
+        _validate_period(as_of, as_of)
+    from .ledger import trial_balance
+
+    try:
+        return trial_balance(tenant_id, as_of=as_of, entity_id=entity_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/v1/journal/entries")
+def journal_entries(
+    transaction_id: Optional[str] = None,
+    limit: int = 100,
+    user_id: int = Depends(require_login),
+):
+    tenant_id = _tenant_of(user_id)
+    from .ledger import get_journal_entries
+
+    entries = get_journal_entries(tenant_id, transaction_id=transaction_id, limit=limit)
+    return {"entries": entries, "count": len(entries)}
+
+
+@app.get("/v1/journal/suspense")
+def journal_suspense(user_id: int = Depends(require_login)):
+    """9999 watchdog: suspense balance/count/aging vs thresholds + completeness check."""
+    tenant_id = _tenant_of(user_id)
+    from .ledger import suspense_status
+
+    try:
+        return suspense_status(tenant_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/v1/audit/human-changes")
+def audit_human_changes(
+    from_utc: Optional[str] = None,
+    to_utc: Optional[str] = None,
+    actor_id: Optional[int] = None,
+    transaction_id: Optional[str] = None,
+    limit: int = 100,
+    user_id: int = Depends(require_login),
+):
+    """Legal record of every human change: revisions with old/new + reasons."""
+    tenant_id = _tenant_of(user_id)
+    from .audit import human_changes
+
+    try:
+        return human_changes(
+            tenant_id,
+            from_utc=from_utc,
+            to_utc=to_utc,
+            actor_id=actor_id,
+            transaction_id=transaction_id,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/v1/audit/verify")
+def audit_verify(user_id: int = Depends(require_login)):
+    """Integrity proof: recompute audit hash chain + vault file hashes."""
+    tenant_id = _tenant_of(user_id)
+    from .audit import verify_integrity
+
+    return verify_integrity(tenant_id)
+
+
+@app.post("/v1/classifications/suggest")
+def classify_suggest(inp: ClassifySuggestIn, user_id: int = Depends(require_login)):
+    tenant_id = _tenant_of(user_id)
+    from .classify import suggest_classification
+
+    try:
+        return suggest_classification(
+            inp.description,
+            inp.account_number,
+            tenant_id,
+            entity_kind=inp.entity_kind,
+            amount_minor=inp.amount_minor,
+            direction=inp.direction,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/v1/classifications/decide")
+def classify_decide(inp: ClassifyDecideIn, user_id: int = Depends(require_login)):
+    tenant_id = _tenant_of(user_id)
+    from .classify import decide
+
+    try:
+        return decide(
+            inp.transaction_id,
+            inp.nature,
+            inp.business_pct,
+            inp.category_id,
+            inp.rationale,
+            user_id,
+            inp.reason,
+            tenant_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+def _load_owned_review_txn(txn_id: str, tenant_id: str) -> dict:
+    """Load review transaction or raise 422/403 (existence + isolation)."""
+    db = get_db()
+    cur = db.execute("SELECT * FROM transactions WHERE id=?", (txn_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            422, f"Invalid parameters: transaction '{txn_id}' does not exist"
+        )
+    txn = dict(row) if not isinstance(row, dict) else row
+    if txn.get("tenant_id") != tenant_id:
+        raise HTTPException(403, "Cross-tenant access denied - isolation guard")
+    return txn
+
+
+def _require_review_reason(reason: str) -> str:
+    if not reason or not reason.strip():
+        raise HTTPException(
+            422, "Invalid parameters: reason is required for audit trail"
+        )
+    return reason.strip()
+
+
+def _resolve_accept_classification(
+    txn: dict, tenant_id: str, inp: ReviewAcceptIn
+) -> tuple:
+    """Fill missing accept classification from suggestion. Returns (nature, business_pct, category_id, rationale)."""
+    from .classify import suggest_classification
+
+    nature, category_id, rationale = inp.nature, inp.category_id, inp.rationale or ""
+    business_pct = inp.business_pct if inp.business_pct is not None else 100
+    if nature and category_id:
+        return nature, business_pct, category_id, rationale
+    try:
+        sug = suggest_classification(
+            txn.get("description_raw") or "",
+            txn.get("account_number") or "",
+            tenant_id,
+            amount_minor=txn.get("amount_minor"),
+            direction=txn.get("direction"),
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    nature = nature or sug["nature"]
+    category_id = category_id or sug["category_id"]
+    if inp.business_pct is None:
+        business_pct = sug.get("business_pct", 100)
+    return nature, business_pct, category_id, rationale or sug.get("rationale", "")
+
+
+@app.post("/v1/review-queue/{txn_id}/accept")
+def review_accept(
+    txn_id: str, inp: ReviewAcceptIn, user_id: int = Depends(require_login)
+):
+    tenant_id = _tenant_of(user_id)
+    db = get_db()
+    txn = _load_owned_review_txn(txn_id, tenant_id)
+    reason = _require_review_reason(inp.reason)
+    from .classify import decide
+    from .ledger import post_transaction, UnknownAccount, UnbalancedEntry
+
+    nature, business_pct, category_id, rationale = _resolve_accept_classification(
+        txn, tenant_id, inp
+    )
+    # Unknown is accepted into 9999 suspense (statements stay complete);
+    # a later re-decide transfers the leg to the real account.
+    if nature == "unknown" and not category_id:
+        category_id = "9999"
+    try:
+        cls = decide(
+            txn_id,
+            nature,
+            business_pct,
+            category_id,
+            rationale,
+            user_id,
+            reason,
+            tenant_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    try:
+        entry = post_transaction(
+            txn,
+            {
+                "id": cls["id"],
+                "category_id": category_id,
+                "nature": nature,
+                "business_pct": business_pct,
+            },
+            created_by=user_id,
+        )
+    except (UnknownAccount, UnbalancedEntry, ValueError) as e:
+        raise HTTPException(
+            422,
+            str(e) if "Invalid parameters" in str(e) else f"Invalid parameters: {e}",
+        )
+    db.execute("UPDATE transactions SET status='confirmed' WHERE id=?", (txn_id,))
+    db.commit()
+    append_audit_log(
+        tenant_id,
+        user_id,
+        "review.accept",
+        "transactions",
+        txn_id,
+        {"classification_id": cls["id"], "entry_id": entry["id"]},
+    )
+    return {
+        "transaction_id": txn_id,
+        "status": "confirmed",
+        "classification": cls,
+        "journal_entry": entry,
+    }
+
+
+def _collect_txn_updates(txn: dict, inp: ReviewEditIn) -> dict:
+    """Validate edit fields and return {field: new_value} for changed fields only."""
+    import re as _re
+
+    if inp.txn_date and not _re.match(r"^\d{4}-\d{2}-\d{2}$", inp.txn_date):
+        raise HTTPException(
+            422,
+            f"Invalid parameters: txn_date must be YYYY-MM-DD, got '{inp.txn_date}'",
+        )
+    if inp.amount_minor is not None and not isinstance(inp.amount_minor, int):
+        raise HTTPException(
+            422,
+            f"Invalid parameters: amount_minor must be int cents, got '{inp.amount_minor}'",
+        )
+    updates: dict = {}
+    if inp.description_raw is not None and inp.description_raw != txn.get(
+        "description_raw"
+    ):
+        updates["description_raw"] = inp.description_raw
+    if inp.txn_date is not None and inp.txn_date != txn.get("txn_date"):
+        updates["txn_date"] = inp.txn_date
+    if inp.amount_minor is not None and inp.amount_minor != txn.get("amount_minor"):
+        updates["amount_minor"] = inp.amount_minor
+    if not updates and not (inp.nature and inp.category_id):
+        raise HTTPException(
+            422,
+            "Invalid parameters: nothing to edit - provide field changes and/or classification",
+        )
+    return updates
+
+
+def _write_field_revisions(
+    txn_id: str, tenant_id: str, txn: dict, updates: dict, reason: str, user_id: int
+) -> list:
+    """Insert one revision row per changed field. Returns revision ids."""
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    db = get_db()
+    now = _dt.now(_tz.utc).isoformat()
+    rev_ids: list = []
+    for field, new_val in updates.items():
+        rev_id = f"rev-{_uuid.uuid4().hex[:8]}"
+        db.execute(
+            "INSERT INTO transaction_revisions (id, tenant_id, transaction_id, field,"
+            " old_value, new_value, reason, actor_id, at_utc) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                rev_id,
+                tenant_id,
+                txn_id,
+                field,
+                str(txn.get(field)),
+                str(new_val),
+                reason,
+                user_id,
+                now,
+            ),
+        )
+        rev_ids.append(rev_id)
+    return rev_ids
+
+
+def _apply_txn_updates(
+    txn_id: str, tenant_id: str, txn: dict, updates: dict, reason: str, user_id: int
+) -> dict:
+    """Apply field updates atomically: revisions + row + fingerprint + journal repost.
+
+    Amount/date changes on a posted txn reverse + repost its journals so every
+    derived statement stays correct. Source rows (spans/vault/runs) are never
+    touched. Returns {revisions, repost}. Rolls everything back on any failure.
+    """
+    db = get_db()
+    try:
+        rev_ids = _write_field_revisions(
+            txn_id, tenant_id, txn, updates, reason, user_id
+        )
+        new_fp = fingerprint_txn(
+            updates.get("txn_date", txn.get("txn_date")),
+            updates.get("amount_minor", txn.get("amount_minor")),
+            updates.get("description_raw", txn.get("description_raw") or ""),
+        )
+        set_clause = ", ".join(f"{k}=?" for k in updates) + ", fingerprint_sha256=?"
+        params: list = list(updates.values()) + [new_fp, txn_id]
+        try:
+            db.execute(
+                f"UPDATE transactions SET {set_clause} WHERE id=?", tuple(params)
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e).upper():
+                raise HTTPException(
+                    422,
+                    "Invalid parameters: edit would create duplicate transaction (fingerprint collision)",
+                )
+            raise
+        repost = None
+        if "amount_minor" in updates or "txn_date" in updates:
+            from .ledger import repost_transaction
+
+            try:
+                repost = repost_transaction(
+                    tenant_id, txn_id, reason, created_by=user_id, db=db
+                )
+            except PermissionError as e:
+                raise HTTPException(403, str(e))
+            except ValueError as e:
+                raise HTTPException(
+                    422,
+                    str(e)
+                    if "Invalid parameters" in str(e)
+                    else f"Invalid parameters: {e}",
+                )
+        db.commit()
+    except HTTPException:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        raise
+    return {"revisions": rev_ids, "repost": repost}
+
+
+def _decide_edit_classification(
+    txn_id: str, tenant_id: str, inp: ReviewEditIn, reason: str, user_id: int
+):
+    """Decide classification for an edit when nature+category provided, else None."""
+    if not (inp.nature and inp.category_id):
+        return None
+    from .classify import decide
+
+    try:
+        return decide(
+            txn_id,
+            inp.nature,
+            inp.business_pct if inp.business_pct is not None else 100,
+            inp.category_id,
+            inp.rationale or "",
+            user_id,
+            reason,
+            tenant_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/v1/review-queue/{txn_id}/edit")
+def review_edit(txn_id: str, inp: ReviewEditIn, user_id: int = Depends(require_login)):
+    tenant_id = _tenant_of(user_id)
+    txn = _load_owned_review_txn(txn_id, tenant_id)
+    reason = _require_review_reason(inp.reason)
+    updates = _collect_txn_updates(txn, inp)
+    applied = (
+        _apply_txn_updates(txn_id, tenant_id, txn, updates, reason, user_id)
+        if updates
+        else {"revisions": [], "repost": None}
+    )
+    rev_ids, repost = applied["revisions"], applied["repost"]
+    cls = _decide_edit_classification(txn_id, tenant_id, inp, reason, user_id)
+    if repost:
+        append_audit_log(
+            tenant_id,
+            user_id,
+            "journal.repost",
+            "transactions",
+            txn_id,
+            {
+                "reversed_entry_ids": repost["reversed_entry_ids"],
+                "fresh_entry_id": repost["fresh_entry_id"],
+                "fresh_category": repost["fresh_category"],
+                "target_inferred": repost["target_inferred"],
+                "reason": reason,
+            },
+        )
+    reverify = None
+    if "amount_minor" in updates or "txn_date" in updates:
+        from .ledger import reverify_chain
+
+        try:
+            reverify = reverify_chain(tenant_id, txn_id)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        append_audit_log(
+            tenant_id,
+            user_id,
+            "review.reverify",
+            "transactions",
+            txn_id,
+            {
+                "overall_pass": reverify["overall_pass"],
+                "rows_checked": reverify["rows_checked"],
+                "running_breaks": reverify["running_top_bottom"]["break_count"]
+                + reverify["running_bottom_top"]["break_count"],
+                "reason": reason,
+            },
+        )
+    append_audit_log(
+        tenant_id,
+        user_id,
+        "review.edit",
+        "transactions",
+        txn_id,
+        {
+            "revisions": rev_ids,
+            "classification_id": cls["id"] if cls else None,
+            "repost_entry_id": repost["fresh_entry_id"] if repost else None,
+            "reverify_pass": reverify["overall_pass"] if reverify else None,
+        },
+    )
+    return {
+        "transaction_id": txn_id,
+        "revisions": rev_ids,
+        "updated_fields": sorted(updates),
+        "classification": cls,
+        "repost": repost,
+        "reverification": reverify,
+    }
+

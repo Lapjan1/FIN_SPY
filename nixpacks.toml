@@ -1,8 +1,19 @@
+# FIN_SPY API build fallback for Nixpacks-era builder.
+# NOTE 2026-10-28: Railway moved this project to builder v4 (Railpack), which
+# ignores this file and builds its own venv at /app/.venv with `pip install
+# -r requirements.txt`, taking the start command from Procfile. Keep this file
+# aligned on /app/.venv as the fallback path. Never system pip, never
+# --break-system-packages (PEP 668 killed 15 Nixpacks deploys Oct 27).
 [phases.setup]
-nixPkgs = ["python3", "python3Packages.pip", "postgresql"]
+nixPkgs = ["python312", "postgresql"]
 
 [phases.install]
-cmds = ["pip install --upgrade pip", "pip install -r requirements.txt", "pip install -e ."]
+cmds = [
+  "python -m venv /app/.venv",
+  "/app/.venv/bin/pip install --upgrade pip",
+  "/app/.venv/bin/pip install -r requirements.txt",
+  "/app/.venv/bin/pip install -e .",
+]
 
 [start]
-cmd = "python -m uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "/app/.venv/bin/python -m uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"

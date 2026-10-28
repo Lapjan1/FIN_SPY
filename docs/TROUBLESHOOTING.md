@@ -19,3 +19,5 @@
 | `pytest` fails only from non-repo dir | canonical.py not packaged, repo root not on sys.path (FINSPIB anti-pattern) | This repo keeps all modules packaged in apps/api|worker, no repo-root import, add tests/test_import_is_packaged |
 | Muse Code ignores AGENTS.md | Workspace not trusted | Trust workspace after reading AGENTS.md/CLAUDE.md/.claude/hooks.json/.agents/skills/.agents/memory |
 | Agent summary says done but diff empty | Agent invented tool result | Evidence before synthesis rule - require file read + test output, use FakeModelClient for tests |
+| WARN dedup unique-index migration failed | Duplicate (tenant, account, fingerprint) rows predate enforcement | Find via GROUP BY tenant_id, account_number, fingerprint_sha256 HAVING COUNT(*)>1, merge manually, re-run init_db |
+| Edit succeeds but trial unchanged | Edit touched description only, or txn unposted (repost only fires on amount/date of posted txns) | Check response.repost; description-only edits post nothing by design |

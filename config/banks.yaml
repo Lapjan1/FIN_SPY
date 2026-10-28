@@ -184,6 +184,9 @@ coa_seed:
   - code: "8000"
     name: "Loan from Owner"
     type: "liability"
+  - code: "9999"
+    name: "Suspense - Unclassified Pending Review"
+    type: "expense"
 
 # 3 Standard COA Templates per SA standard accounting practices - per user decision: default personal and options mixed or business per merchant per account, for competition not lifetime project
 # Pastel/Sage/Xero SA common numbering: 1000-1999 Assets, 2000-2999 Liabilities, 3000-3999 Equity, 4000-4999 Income, 5000-5999 COGS, 6000-8999 Expenses, 9000-9999 Other
@@ -217,6 +220,7 @@ coa_templates:
       - {code: "6070", name: "Entertainment / Dining / Netflix", type: "expense"}
       - {code: "6080", name: "Clothing - Personal", type: "expense"}
       - {code: "6090", name: "Bank Charges - Personal", type: "expense"}
+      - {code: "9999", name: "Suspense - Unclassified Pending Review", type: "expense"}
 
   sme_cc:
     description: "SME/CC Pty Ltd / Close Corporation - Full Compliance 70 accounts per SA Pastel default, juristic person per Companies Act s19, no private in books except via drawings, per docs/DISCLAIMER.md"
@@ -263,6 +267,7 @@ coa_templates:
       - {code: "6600", name: "Bank Charges", type: "expense"}
       - {code: "6610", name: "Interest Paid", type: "expense"}
       - {code: "6700", name: "Office Supplies", type: "expense"}
+      - {code: "9999", name: "Suspense - Unclassified Pending Review", type: "expense"}
 
   mixed_sole_prop:
     description: "Mixed Personal & Business Sole Proprietor / Person Trading As - Standard Format If Selected per SA Income Tax Act no separate juristic person but must apportion, per docs/DISCLAIMER.md - 50 accounts combined personal asset pool + business asset pool + clear equity distribution + private usage tracking"
@@ -299,3 +304,4 @@ coa_templates:
       - {code: "6600", name: "Bank Charges", type: "expense"}
       - {code: "1600", name: "VAT Input / VAT Control (debit)", type: "asset"}
       - {code: "2200", name: "VAT Output / VAT Control", type: "liability"}
+      - {code: "9999", name: "Suspense - Unclassified Pending Review", type: "expense"}

@@ -17,6 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="flex gap-4 text-sm">
             <a href="/dashboard">Dashboard</a>
             <a href="/transactions">Transactions</a>
+            <a href="/upload">Upload</a>
+            <a href="/inbox">Inbox</a>
+            <a href="/chat">Chat</a>
             <a href="/review">Review</a>
             <a href="/privacy">Privacy</a>
             <a href="/terms">Terms</a>

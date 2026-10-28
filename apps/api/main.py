@@ -598,7 +598,19 @@ def spy_run(user_id: int = Depends(require_login)):
 
 @app.post("/v1/chat")
 def chat(req: ChatRequest, user_id: int = Depends(require_login)):
-    return {"answer": f"Mock for tenant {req.tenant_id}: Your Woolworths spend R1200 last month, 2x duplicate subscription detected R89.99, see doc a1b2 page 3 L012. Trial pages remaining: {get_trial_pages_remaining(user_id)}", "tool_calls": [], "citations": []}
+    tenant_id = _tenant_of(user_id)
+    if req.tenant_id != tenant_id:
+        raise HTTPException(403, detail="Cross-tenant access denied - isolation guard")
+    msgs = req.messages or []
+    question = ""
+    for m in reversed(msgs):
+        if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
+            question = str(m["content"])
+            break
+    if not question:
+        raise HTTPException(422, "Invalid parameters: messages must include a user message")
+    from apps.worker.spy.chat import chat_answer
+    return chat_answer(tenant_id, question)
 
 @app.post("/v1/reports")
 def create_report(kind: str = "excel", request: Request = None, user_id: int = Depends(require_subscription)):

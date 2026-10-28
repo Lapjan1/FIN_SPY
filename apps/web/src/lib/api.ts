@@ -253,6 +253,30 @@ export function runSpy(userId: string): Promise<{ txn_count: number; flags: numb
   return api('/v1/spy/run', userId, { method: 'POST' });
 }
 
+export type Me = {
+  user: { id: number; email: string; tenant_id: string; name?: string };
+  trial_pages_remaining: number | null;
+  is_trial_unlimited: boolean;
+};
+
+export function fetchMe(userId: string): Promise<Me> {
+  return api<Me>('/v1/auth/me', userId);
+}
+
+export type ChatReply = {
+  answer: string;
+  tool_calls: Array<{ tool: string; result: unknown }>;
+  citations: Array<{ txn_id?: string; document_id?: string | null }>;
+  model: string;
+};
+
+export function postChat(userId: string, tenantId: string, messages: Array<{ role: string; content: string }>): Promise<ChatReply> {
+  return api<ChatReply>('/v1/chat', userId, {
+    method: 'POST',
+    body: JSON.stringify({ tenant_id: tenantId, messages }),
+  });
+}
+
 export function formatRands(minor: number | undefined | null): string {
   if (minor === undefined || minor === null) return '—';
   return `R${(minor / 100).toFixed(2)}`;

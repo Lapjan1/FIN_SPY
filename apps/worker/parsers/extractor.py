@@ -105,6 +105,25 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
 TEXT_SUFFIXES = {".csv", ".txt", ".ofx", ".qif"}
 
 
+def _looks_csv(raw: str) -> bool:
+    """Content sniff for CSV: 2+ lines sharing a 3+ cell count.
+
+    Suffixes lie (vault keys always end .pdf), and blind csv-parsing
+    would shred space-separated TXT amounts - so only consistent
+    multi-cell content takes the CSV path.
+    """
+    import csv as _csv
+    import io as _io
+    counts = []
+    for row in _csv.reader(_io.StringIO(raw)):
+        if not row or not any(c.strip() for c in row):
+            continue
+        counts.append(len(row))
+        if len(counts) >= 5:
+            break
+    return (len(counts) >= 2 and counts[0] >= 3
+            and all(c == counts[0] for c in counts))
+
 def extract_text_lines(text_path: Path) -> List[Dict]:
     """Text-reader twin of extract_text_with_bbox for CSV/TXT/OFX uploads.
 
@@ -115,7 +134,7 @@ def extract_text_lines(text_path: Path) -> List[Dict]:
     raw = text_path.read_bytes().decode("utf-8-sig", errors="replace")
     # CSV: parse cells and space-join. Raw commas fuse adjacent amounts
     # into one SA-format token (298.94,9701.06); spaces keep them apart.
-    if text_path.suffix.lower() == ".csv":
+    if text_path.suffix.lower() == ".csv" or _looks_csv(raw):
         import csv as _csv
         import io as _io
         import re as _re
@@ -341,10 +360,23 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     DB-first: result should be persisted to source_spans/transactions before returning
     Handles encrypted PDFs: password param transient, never logged/stored, if no password and encrypted raises needs_password
     """
-    if pdf_path.suffix.lower() in TEXT_SUFFIXES:
-        pages = extract_text_lines(pdf_path)
-    else:
+    # Dispatch sniffs content, never the suffix: vault keys always end
+    # .pdf (storage_key = {sha}.pdf) even when the bytes are CSV/text.
+    head = pdf_path.read_bytes()[:5]
+    if head[:4] == b"%PDF":
         pages = extract_text_with_bbox(pdf_path, password=password)
+    else:
+        # Text-based statements (CSV/TXT/OFX). Binary uploads (photos)
+        # fail here with a clear error instead of burning LLM money on
+        # garbage lines - OCR is not wired yet.
+        try:
+            pdf_path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(
+                "Only PDF and text-based statements (CSV/TXT/OFX) are"
+                " supported; image uploads need OCR, which is not wired yet."
+            )
+        pages = extract_text_lines(pdf_path)
     # Bank parser first (precision), generic engine second (recall),
     # whole-statement LLM strictly last resort (P0-A0/D9).
     result = deterministic_parse(pages, bank_hint)

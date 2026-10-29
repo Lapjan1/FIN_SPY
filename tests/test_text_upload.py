@@ -55,3 +55,17 @@ def test_extract_document_dispatches_csv(tmp_path, monkeypatch):
     )
     result = extract_document(Path(p), bank_hint="FNB")
     assert len(result.rows) >= 3
+
+
+def test_extract_document_sniffs_vault_pdf_name(tmp_path, monkeypatch):
+    # Vault keys always end .pdf (storage_key = {sha}.pdf) even for CSV
+    # bytes - dispatch must sniff content, never trust the suffix.
+    p = tmp_path / "abc123.pdf"
+    p.write_text(CSV, encoding="utf-8")
+    monkeypatch.setattr(
+        "apps.worker.parsers.extractor.llm_fallback",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("LLM must not run when generic chains")),
+    )
+    result = extract_document(Path(p), bank_hint="FNB")
+    assert len(result.rows) >= 3

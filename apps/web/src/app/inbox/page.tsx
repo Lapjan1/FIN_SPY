@@ -1,34 +1,37 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { DocInfo, fetchDocuments } from '../../lib/api';
+import RequireSession, { SessionBar } from '../../components/RequireSession';
+import { DocInfo, Me, fetchDocuments } from '../../lib/api';
 
 export default function InboxPage() {
-  const [userId, setUserId] = useState('');
+  return (
+    <RequireSession>
+      {({ uid, me }) => <InboxInner uid={uid} me={me} />}
+    </RequireSession>
+  );
+}
+
+function InboxInner({ uid, me }: { uid: string; me: Me }) {
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('finspy-user-id') : '';
-    if (saved) setUserId(saved);
-  }, []);
-
   async function load() {
-    if (!userId) {
-      setError('Enter your user id first (see Account page after login).');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      window.localStorage.setItem('finspy-user-id', userId);
-      setDocs(await fetchDocuments(userId));
+      setDocs(await fetchDocuments(uid));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Load failed');
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-6">
@@ -39,15 +42,11 @@ export default function InboxPage() {
         </p>
       </div>
 
+      <SessionBar me={me} />
+
       <div className="flex gap-2 items-center">
-        <input
-          className="flex-1 p-2 bg-slate-900 border border-slate-700 rounded"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="user id (X-User-Id, saved after first load)"
-        />
         <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
-          {loading ? 'Loading' : 'Load'}
+          {loading ? 'Loading' : 'Reload'}
         </button>
       </div>
 

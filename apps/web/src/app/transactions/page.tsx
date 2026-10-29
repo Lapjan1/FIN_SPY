@@ -1,7 +1,9 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import SourceViewer from '../../components/SourceViewer';
+import RequireSession, { SessionBar } from '../../components/RequireSession';
 import {
+  Me,
   Transaction,
   TxnSources,
   fetchTransactionsAuth,
@@ -10,28 +12,25 @@ import {
 } from '../../lib/api';
 
 export default function TransactionsPage() {
-  const [userId, setUserId] = useState('');
+  return (
+    <RequireSession>
+      {({ uid, me }) => <TransactionsInner uid={uid} me={me} />}
+    </RequireSession>
+  );
+}
+
+function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [sources, setSources] = useState<TxnSources | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('finspy-user-id') : '';
-    if (saved) setUserId(saved);
-  }, []);
-
   async function load() {
-    if (!userId) {
-      setError('Enter your user id first (see Account page after login).');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      window.localStorage.setItem('finspy-user-id', userId);
-      setTxns(await fetchTransactionsAuth(userId));
+      setTxns(await fetchTransactionsAuth(uid));
       setSelected(null);
       setSources(null);
     } catch (e) {
@@ -41,12 +40,17 @@ export default function TransactionsPage() {
     }
   }
 
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function select(txn: Transaction) {
     setSelected(txn);
     setSources(null);
     setError('');
     try {
-      setSources(await fetchTxnSources(userId, txn.id));
+      setSources(await fetchTxnSources(uid, txn.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sources failed');
     }
@@ -61,15 +65,11 @@ export default function TransactionsPage() {
         </p>
       </div>
 
+      <SessionBar me={me} />
+
       <div className="flex gap-2 items-center">
-        <input
-          className="flex-1 p-2 bg-slate-900 border border-slate-700 rounded"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="user id (X-User-Id, saved after first load)"
-        />
         <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
-          {loading ? 'Loading' : 'Load'}
+          {loading ? 'Loading' : 'Reload'}
         </button>
       </div>
 
@@ -110,7 +110,7 @@ export default function TransactionsPage() {
             <p className="text-sm text-slate-400">No source spans linked (manually added or legacy row).</p>
           ) : (
             <SourceViewer
-              userId={userId}
+              userId={uid}
               docId={sources.document_id}
               docSha256={sources.doc_sha256 || ''}
               pageNo={sources.page_no}

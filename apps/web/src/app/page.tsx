@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { API_BASE } from '../lib/api';
+import { API_BASE, Me, fetchMe, getSessionUserId } from '../lib/api';
 
 type ApiState = 'checking' | 'online' | 'unreachable';
 
@@ -26,6 +26,31 @@ function ApiStatus() {
   return <span className={`px-2 py-0.5 rounded text-xs ${style}`}>{label}</span>;
 }
 
+function HomeContinue() {
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    const uid = getSessionUserId();
+    if (uid) fetchMe(uid).then(setMe, () => setMe(null));
+  }, []);
+  if (!me) return null;
+  const trial = me.is_trial_unlimited
+    ? 'Pro: unlimited uploads'
+    : `Trial: ${me.trial_pages_remaining ?? 0} uploads left`;
+  return (
+    <div className="border border-slate-800 rounded p-4 flex flex-col md:flex-row md:items-center gap-3 justify-between">
+      <p className="text-sm">
+        Welcome back, <span className="font-semibold">{me.user.email}</span>{' '}
+        <span className="text-slate-400">- {trial}.</span>
+      </p>
+      <div className="flex gap-3 text-sm shrink-0">
+        <a href="/upload" className="bg-blue-600 px-4 py-2 rounded">Continue: upload</a>
+        <a href="/review" className="border border-slate-700 px-4 py-2 rounded">Review</a>
+        <a href="/dashboard" className="border border-slate-700 px-4 py-2 rounded">Dashboard</a>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-10">
@@ -45,9 +70,11 @@ export default function HomePage() {
         </div>
         <div className="flex flex-col items-start gap-2">
           <ApiStatus />
-          <p className="text-xs text-slate-500">Free trial: 20 pages, no card required.</p>
+          <p className="text-xs text-slate-500">Free trial: 20 uploads, no card required.</p>
         </div>
       </div>
+
+      <HomeContinue />
 
       <section>
         <h2 className="text-xl font-semibold mb-4">What you get</h2>
@@ -112,6 +139,9 @@ export default function HomePage() {
             </span>
           </li>
         </ol>
+        <p className="text-sm text-slate-400 mt-3">
+          Full walkthrough of every function: <a href="/help" className="text-blue-400 underline">Help</a>.
+        </p>
       </section>
 
       <section className="border border-slate-800 rounded p-4 flex flex-col md:flex-row md:items-center gap-3 justify-between">

@@ -139,7 +139,6 @@ def worker_loop(poll_interval: int = 5, max_iterations: int = None):
         cur = db.execute("SELECT id, tenant_id, sha256, storage_key, uploaded_by FROM source_documents WHERE status='queued' ORDER BY uploaded_at_utc ASC LIMIT 5")
         rows = cur.fetchall()
         if not rows:
-            print(f"[{datetime.now(timezone.utc).isoformat()}] No queued docs, sleeping {poll_interval}s")
             time.sleep(poll_interval)
             iteration += 1
             if max_iterations and iteration >= max_iterations:

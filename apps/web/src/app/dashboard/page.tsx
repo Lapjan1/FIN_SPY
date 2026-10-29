@@ -2,9 +2,11 @@
 import React, { useEffect, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { KpiCards } from '../../components/KpiCards';
+import RequireSession, { SessionBar } from '../../components/RequireSession';
 import {
   DashboardSummary,
   Flag,
+  Me,
   fetchDashboard,
   fetchFlags,
   formatRands,
@@ -12,29 +14,26 @@ import {
 } from '../../lib/api';
 
 export default function DashboardPage() {
-  const [userId, setUserId] = useState('');
+  return (
+    <RequireSession>
+      {({ uid, me }) => <DashboardInner uid={uid} me={me} />}
+    </RequireSession>
+  );
+}
+
+function DashboardInner({ uid, me }: { uid: string; me: Me }) {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [flags, setFlags] = useState<Flag[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('finspy-user-id') : '';
-    if (saved) setUserId(saved);
-  }, []);
-
   async function load() {
-    if (!userId) {
-      setError('Enter your user id first (see Account page after login).');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      window.localStorage.setItem('finspy-user-id', userId);
       const [summary, flagList] = await Promise.all([
-        fetchDashboard(userId),
-        fetchFlags(userId).catch(() => [] as Flag[]),
+        fetchDashboard(uid),
+        fetchFlags(uid).catch(() => [] as Flag[]),
       ]);
       setData(summary);
       setFlags(flagList);
@@ -45,12 +44,16 @@ export default function DashboardPage() {
     }
   }
 
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function spy() {
-    if (!userId) return;
     setLoading(true);
     setError('');
     try {
-      await runSpy(userId);
+      await runSpy(uid);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Spy run failed');
@@ -195,17 +198,13 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      <SessionBar me={me} />
+
       <div className="flex gap-2 items-center">
-        <input
-          className="flex-1 p-2 bg-slate-900 border border-slate-700 rounded"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="user id (X-User-Id, saved after first load)"
-        />
         <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
-          {loading ? 'Loading' : 'Load'}
+          {loading ? 'Loading' : 'Reload'}
         </button>
-        <button onClick={spy} disabled={loading || !userId} className="bg-rose-700 px-4 py-2 rounded disabled:opacity-50">
+        <button onClick={spy} disabled={loading} className="bg-rose-700 px-4 py-2 rounded disabled:opacity-50">
           Run spy
         </button>
       </div>
@@ -283,7 +282,7 @@ export default function DashboardPage() {
           </div>
         </>
       ) : (
-        !loading && <p className="text-sm text-slate-400">Load to see live KPIs from your ledger.</p>
+        !loading && <p className="text-sm text-slate-400">Loading live KPIs from your ledger.</p>
       )}
     </main>
   );

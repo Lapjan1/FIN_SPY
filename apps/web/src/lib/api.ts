@@ -403,3 +403,9 @@ export function startCheckout(userId: string, planCode: string): Promise<Checkou
     method: 'POST',
   });
 }
+
+export type CancelResult = { ok: boolean; status: string; note?: string };
+
+export function cancelSubscription(userId: string): Promise<CancelResult> {
+  return api<CancelResult>('/v1/billing/cancel', userId, { method: 'POST' });
+}

@@ -4,6 +4,7 @@ import {
   AuthResult,
   BillingPlans,
   Me,
+  cancelSubscription,
   clearSession,
   fetchBillingPlans,
   fetchMe,
@@ -59,8 +60,8 @@ export default function AccountPage() {
     setUid(id);
     setPassword('');
     try {
-      setMe(await fetchMe(id));
-      say(`Signed in as ${res.email}.`, 'ok');
+      await fetchMe(id);
+      window.location.href = '/';
     } catch {
       say('Signed in, but loading your trial status failed. Reload to retry.', 'error');
     }
@@ -139,6 +140,21 @@ export default function AccountPage() {
       }
     } catch (e) {
       say(e instanceof Error ? e.message : 'Checkout failed.', 'error');
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function unsubscribe() {
+    if (!uid) return;
+    if (!window.confirm('Cancel your subscription? Uploads stop being unlimited immediately.')) return;
+    setWorking(true);
+    try {
+      await cancelSubscription(uid);
+      setMe(await fetchMe(uid));
+      window.location.reload();
+    } catch (e) {
+      say(e instanceof Error ? e.message : 'Cancel failed.', 'error');
     } finally {
       setWorking(false);
     }
@@ -259,6 +275,11 @@ export default function AccountPage() {
               </div>
             )}
             <p className="text-xs text-slate-500">Payments via Paystack (test mode while we finish verification). Webhook activates your plan automatically.</p>
+            {me.is_trial_unlimited ? (
+              <button onClick={unsubscribe} disabled={working} className="border border-red-800 text-red-300 px-3 py-1 rounded text-sm disabled:opacity-50">
+                Cancel subscription
+              </button>
+            ) : null}
           </div>
         </div>
       )}

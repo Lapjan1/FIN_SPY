@@ -1,11 +1,20 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import MetaModelSelector from '../../components/settings/MetaModelSelector';
+import RequireSession, { SessionBar } from '../../components/RequireSession';
+import { Me } from '../../lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
 export default function SettingsPage() {
-  const [userId,setUserId]=useState('1'); // admin id for dev - use X-User-Id header
+  return (
+    <RequireSession>
+      {({ uid, me }) => <SettingsInner uid={uid} me={me} />}
+    </RequireSession>
+  );
+}
+
+function SettingsInner({ uid, me }: { uid: string; me: Me }) {
   const [settings,setSettings]=useState<Record<string,string>>({});
   const [model,setModel]=useState('muse-spark-1.1');
   const [effort,setEffort]=useState('medium');
@@ -13,19 +22,15 @@ export default function SettingsPage() {
   const [isAdmin,setIsAdmin]=useState(false);
 
   useEffect(()=>{
-    // Try to fetch me to check admin
-    fetch(`${API_BASE}/v1/auth/me`,{headers:{'X-User-Id':userId}}).then(r=>r.json()).then(d=>{
-      if(d.user && d.user.role==='admin') setIsAdmin(true);
-      // If admin_email env allowlist matches, treat as admin for demo - check via settings
-    }).catch(()=>{});
-    // Fetch settings admin-only
-    fetch(`${API_BASE}/v1/settings`,{headers:{'X-User-Id':userId}}).then(r=>r.json()).then(data=>{
+    // Fetch settings admin-only; non-admin gets detail error, never the table
+    fetch(`${API_BASE}/v1/settings`,{headers:{'X-User-Id':uid}}).then(r=>r.json()).then(data=>{
       if(data.detail) { setMsg('Not admin - settings are admin-only'); setIsAdmin(false); return; }
       setSettings(data); setIsAdmin(true);
       if(data.model) setModel(data.model);
       if(data.effort) setEffort(data.effort);
-    }).catch(e=>setMsg('Failed fetch settings - need admin X-User-Id'));
-  },[userId]);
+    }).catch(()=>setMsg('Failed to fetch settings - are you signed in as admin?'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   async function saveSetting(key:string,value:string) {
     // POST /v1/settings admin-only, forbids secret keys per docs/SETTINGS.md
@@ -34,7 +39,7 @@ export default function SettingsPage() {
       setMsg(`Reject 400: ${key} must be an env var per security guide, not a DB table (fail-closed)`);
       return;
     }
-    const res = await fetch(`${API_BASE}/v1/settings`,{method:'POST',headers:{'Content-Type':'application/json','X-User-Id':userId},body:JSON.stringify({key,value})});
+    const res = await fetch(`${API_BASE}/v1/settings`,{method:'POST',headers:{'Content-Type':'application/json','X-User-Id':uid},body:JSON.stringify({key,value})});
     const data = await res.json();
     setMsg(JSON.stringify(data));
     if(data.ok) setSettings({...settings,[key]:value});
@@ -43,15 +48,15 @@ export default function SettingsPage() {
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">Settings - Meta Models Compliance (Admin Only)</h1>
-      <p className="text-sm text-slate-400">Admin-only for keys (***REDACTED*** + last4, type password), user-visible read-only for model/effort/cost. Ollama-local only as privacy fallback, freellmapi active badge + meta pending warning.</p>
+      <p className="text-sm text-slate-400">Admin-only for keys (***REDACTED*** + last4, type password), user-visible read-only for model/effort/cost. Ollama-local only as privacy fallback.</p>
+
+      <SessionBar me={me} />
 
       <div className="border border-slate-800 rounded p-4 space-y-2">
-        <label className="text-xs">X-User-Id (dev auth, use admin id 1):</label>
-        <input className="w-full p-2 bg-slate-900 border border-slate-700 rounded" value={userId} onChange={e=>setUserId(e.target.value)} />
         <div className="text-xs">IsAdmin: {isAdmin?'Yes (role admin or ADMIN_EMAIL allowlist)':'No - settings are admin-only'}</div>
         <div className="flex gap-2">
-          <span className="px-2 py-1 bg-green-900 text-green-300 rounded text-xs">freellmapi dev active - http://127.0.0.1:3001/v1 (278 models) per local_services.yaml</span>
-          <span className="px-2 py-1 bg-yellow-900 text-yellow-300 rounded text-xs">meta_official pending - META_API_KEY expected 1-2 days Cerebral Valley per STATE.md Blocked</span>
+          <span className="px-2 py-1 bg-green-900 text-green-300 rounded text-xs">freellmapi dev http://127.0.0.1:3001/v1 (local dev only)</span>
+          <span className="px-2 py-1 bg-yellow-900 text-yellow-300 rounded text-xs">meta_official via server env (worker only, never in this table)</span>
         </div>
       </div>
 

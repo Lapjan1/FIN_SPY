@@ -1,8 +1,10 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import RequireSession, { SessionBar } from '../../components/RequireSession';
 import {
   AcceptResult,
   EditResult,
+  Me,
   ReviewTxn,
   Suggestion,
   acceptTransaction,
@@ -27,7 +29,14 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function ReviewPage() {
-  const [userId, setUserId] = useState('');
+  return (
+    <RequireSession>
+      {({ uid, me }) => <ReviewInner uid={uid} me={me} />}
+    </RequireSession>
+  );
+}
+
+function ReviewInner({ uid, me }: { uid: string; me: Me }) {
   const [queue, setQueue] = useState<ReviewTxn[]>([]);
   const [selected, setSelected] = useState<ReviewTxn | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
@@ -46,22 +55,12 @@ export default function ReviewPage() {
   const [editDate, setEditDate] = useState('');
   const [editRands, setEditRands] = useState('');
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('finspy-user-id') : '';
-    if (saved) setUserId(saved);
-  }, []);
-
   async function load() {
-    if (!userId) {
-      setError('Enter your user id first (see Account page after login).');
-      return;
-    }
     setLoading(true);
     setError('');
     setResult('');
     try {
-      window.localStorage.setItem('finspy-user-id', userId);
-      const data = await fetchReviewQueue(userId);
+      const data = await fetchReviewQueue(uid);
       setQueue(data.transactions);
       setSelected(null);
       setSuggestion(null);
@@ -71,6 +70,11 @@ export default function ReviewPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function select(txn: ReviewTxn) {
     setSelected(txn);
@@ -84,7 +88,7 @@ export default function ReviewPage() {
     setEditDate(txn.txn_date);
     setEditRands((txn.amount_minor / 100).toFixed(2));
     try {
-      const sug = await suggestClassification(userId, {
+      const sug = await suggestClassification(uid, {
         description: txn.description_raw,
         account_number: txn.account_number || '',
         amount_minor: txn.amount_minor,
@@ -101,7 +105,7 @@ export default function ReviewPage() {
     setWorking(true);
     setError('');
     try {
-      const out: AcceptResult = await acceptTransaction(userId, selected.id, {
+      const out: AcceptResult = await acceptTransaction(uid, selected.id, {
         nature: nature || undefined,
         business_pct: businessPct === '' ? undefined : Number(businessPct),
         category_id: categoryId || undefined,
@@ -135,7 +139,7 @@ export default function ReviewPage() {
       if (businessPct !== '') patch.business_pct = Number(businessPct);
       if (categoryId) patch.category_id = categoryId;
       if (rationale) patch.rationale = rationale;
-      const out: EditResult = await editTransaction(userId, selected.id, patch);
+      const out: EditResult = await editTransaction(uid, selected.id, patch);
       const reverify = out.reverification
         ? ` Reverify ${out.reverification.overall_pass ? 'PASS' : 'FAIL'} over ${out.reverification.rows_checked} rows.`
         : '';
@@ -159,15 +163,11 @@ export default function ReviewPage() {
         </p>
       </div>
 
+      <SessionBar me={me} />
+
       <div className="flex gap-2 items-center">
-        <input
-          className="flex-1 p-2 bg-slate-900 border border-slate-700 rounded"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="user id (X-User-Id, saved after first load)"
-        />
         <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
-          {loading ? 'Loading' : 'Load queue'}
+          {loading ? 'Loading' : 'Reload queue'}
         </button>
       </div>
 
@@ -179,7 +179,7 @@ export default function ReviewPage() {
             Queue ({queue.length})
           </div>
           {queue.length === 0 && !loading ? (
-            <p className="p-4 text-sm text-slate-400">Empty - load the queue, or everything is already confirmed.</p>
+            <p className="p-4 text-sm text-slate-400">Empty - everything is already confirmed, or upload a statement first.</p>
           ) : null}
           <ul className="divide-y divide-slate-800 max-h-[560px] overflow-auto">
             {queue.map((txn) => (

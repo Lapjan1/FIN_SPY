@@ -20,6 +20,7 @@ from typing import List, Optional
 import hashlib
 import os
 import json
+import threading
 from pathlib import Path
 
 from .db import init_db, get_db, append_audit_log, get_setting, env_or_setting, compute_row_hash, get_last_audit_hash
@@ -58,10 +59,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _worker_enabled() -> bool:
+    return os.getenv("WORKER_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+def _maybe_start_worker() -> bool:
+    """Start the extraction poll loop in-process when enabled.
+
+    Railway: API + vault share one disk, so a separate worker service could not
+    read uploads - the loop runs here as a daemon thread (single uvicorn worker).
+    Local dev keeps python -m apps.worker.main with WORKER_ENABLED unset (default off).
+    """
+    if not _worker_enabled():
+        return False
+    from apps.worker.main import worker_loop
+    threading.Thread(target=worker_loop, kwargs={'poll_interval': 5}, name='finspy-worker', daemon=True).start()
+    return True
+
+
 # Init DB on startup (tables + Paystack columns)
 @app.on_event("startup")
 def startup():
     init_db()
+    _maybe_start_worker()
     # Check session secret fail-closed in production
     try:
         check_session_secret()
@@ -323,29 +343,49 @@ async def upload_document(
             except Exception:
                 status = "needs_password"
 
+    # Vault is a global content store (bytes once); documents are per-tenant rows.
     if not storage_key.exists():
         storage_key.write_bytes(data)
-        # Append source_documents + audit_log hash-chain
-        doc_id = sha[:16]
-        try:
-            db.execute(
-                "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status)
-            )
-            # Audit log append with prev_hash/row_hash per AGENTS.md - never log password
-            audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method}
-            append_audit_log(tenant_id, user_id, "document.upload", "source_documents", doc_id, audit_payload)
-            db.commit()
-        except Exception as e:
-            print(f"Document already exists or error: {e}")
+    doc_id = hashlib.sha256(f"{tenant_id}|{sha}".encode()).hexdigest()[:16]
+    cur = db.execute("SELECT id, status FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
+    existing = cur.fetchone()
+    if existing:
+        ex_id = existing["id"] if isinstance(existing, dict) else existing[0]
+        ex_status = existing["status"] if isinstance(existing, dict) else existing[1]
+        return {
+            "id": ex_id,
+            "sha256": sha,
+            "storage_key": str(storage_key),
+            "original_filename": file.filename,
+            "size_bytes": len(data),
+            "status": ex_status,
+            "duplicate": True,
+            "is_encrypted": is_encrypted,
+            "needs_password": pdf_needs_password,
+            "tenant_id": tenant_id,
+            "trial_pages_remaining": get_trial_pages_remaining(user_id)
+        }
+    # Append source_documents + audit_log hash-chain
+    try:
+        db.execute(
+            "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status)
+        )
+        # Audit log append with prev_hash/row_hash per AGENTS.md - never log password
+        audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method}
+        append_audit_log(tenant_id, user_id, "document.upload", "source_documents", doc_id, audit_payload)
+        db.commit()
+    except Exception as e:
+        print(f"Document already exists or error: {e}")
 
     return {
-        "id": sha[:12],
+        "id": doc_id,
         "sha256": sha,
         "storage_key": str(storage_key),
         "original_filename": file.filename,
         "size_bytes": len(data),
         "status": status,
+        "duplicate": False,
         "is_encrypted": is_encrypted,
         "needs_password": pdf_needs_password,
         "tenant_id": tenant_id,
@@ -878,6 +918,22 @@ def paystack_callback(trxref: str = "", reference: str = "", user_id: int = Depe
         return {"ok": True, "reference": ref, "status": data.get("status")}
     except Exception as e:
         raise HTTPException(500, f"Verify failed: {e}")
+
+@app.post("/v1/billing/cancel")
+def billing_cancel(user_id: int = Depends(require_login)):
+    """Cancel subscription effective immediately: status -> cancelled, trial metering resumes.
+    Paystack-side disable happens via dashboard/webhook; no subscription code is stored to call disable.
+    """
+    db = get_db()
+    user = get_user(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    if user.get("subscription_status") not in ("active", "trialing"):
+        return {"ok": True, "status": user.get("subscription_status") or "free", "note": "No active subscription"}
+    db.execute("UPDATE users SET subscription_status='cancelled' WHERE id=?", (user_id,))
+    db.commit()
+    append_audit_log(_tenant_of(user_id), user_id, "billing.cancel", "users", str(user_id), {"status": "cancelled"})
+    return {"ok": True, "status": "cancelled"}
 
 @app.post("/v1/webhooks/paystack")
 async def paystack_webhook(request: Request):

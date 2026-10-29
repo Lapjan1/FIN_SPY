@@ -210,7 +210,7 @@ def init_db():
         account_number TEXT,
         bank_name TEXT,
         branch_code TEXT,
-        sha256 TEXT UNIQUE NOT NULL,
+        sha256 TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
         mime TEXT,
         storage_key TEXT NOT NULL,
@@ -222,6 +222,7 @@ def init_db():
         status TEXT DEFAULT 'queued',
         legal_hold INTEGER DEFAULT 0,
         tsa_token_key TEXT,
+        UNIQUE(tenant_id, sha256),
         FOREIGN KEY (tenant_id) REFERENCES tenants(id),
         FOREIGN KEY (account_id) REFERENCES accounts(id)
     );
@@ -679,6 +680,244 @@ def _ensure_dedup_index(db: DbHandle):
             )
 
 
+def _doc_index_cols(db, index_name):
+    rows = db.execute(f"PRAGMA index_info({index_name})").fetchall()
+    return [(c["name"] if isinstance(c, dict) else c[2]) for c in rows]
+
+
+def _doc_index_is_unique(ix):
+    return (ix["unique"] if isinstance(ix, dict) else ix[2]) == 1
+
+
+def _doc_pg_migrate(db):
+    """Drop old global-unique constraint(s), add composite. Returns enforced bool."""
+    try:
+        cur = db.execute(
+            "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint"
+            " WHERE conrelid = 'source_documents'::regclass AND contype = 'u';"
+        )
+        for row in cur.fetchall():
+            name = row["conname"] if isinstance(row, dict) else row[0]
+            defi = row["pg_get_constraintdef"] if isinstance(row, dict) else row[1]
+            if defi and "sha256" in defi and "tenant_id" not in defi:
+                db.execute(f"ALTER TABLE source_documents DROP CONSTRAINT {name};")
+        cur = db.execute(
+            "SELECT 1 FROM pg_constraint WHERE conname = 'source_documents_tenant_sha_key';"
+        )
+        if not cur.fetchone():
+            db.execute(
+                "ALTER TABLE source_documents ADD CONSTRAINT source_documents_tenant_sha_key"
+                " UNIQUE (tenant_id, sha256);"
+            )
+        cur = db.execute(
+            "SELECT 1 FROM pg_constraint WHERE conname = 'source_documents_tenant_sha_key';"
+        )
+        return cur.fetchone() is not None
+    except Exception as e:
+        print(f"WARN: doc tenant-sha pg migration: {e}")
+        return False
+
+
+def _doc_sqlite_uniques(db):
+    """(has_global_unique, has_composite_unique) or None on error."""
+    try:
+        idxs = db.execute("PRAGMA index_list(source_documents)").fetchall()
+    except Exception:
+        return None
+    has_global = any(
+        _doc_index_is_unique(ix)
+        and (ix["origin"] if isinstance(ix, dict) else ix[3]) == "u"
+        and _doc_index_cols(db, ix["name"] if isinstance(ix, dict) else ix[1]) == ["sha256"]
+        for ix in idxs
+    )
+    has_composite = any(
+        _doc_index_is_unique(ix)
+        and _doc_index_cols(db, ix["name"] if isinstance(ix, dict) else ix[1]) == ["tenant_id", "sha256"]
+        for ix in idxs
+    )
+    return (has_global, has_composite)
+
+
+def _doc_sqlite_ensure_composite(db):
+    try:
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_source_documents_tenant_sha_unique"
+            " ON source_documents(tenant_id, sha256);"
+        )
+    except Exception as e:
+        print(f"WARN: doc tenant-sha unique index: {e}")
+
+
+def _doc_sqlite_viewdefs(db):
+    """Saved (name, sql) of views referencing the table, or None on error."""
+    try:
+        views = db.execute(
+            "SELECT name, sql FROM sqlite_master"
+            " WHERE type = 'view' AND sql LIKE '%source_documents%';"
+        ).fetchall()
+    except Exception:
+        return None
+    return [
+        (
+            (v["name"] if isinstance(v, dict) else v[0]),
+            (v["sql"] if isinstance(v, dict) else v[1]),
+        )
+        for v in views
+    ]
+
+
+def _doc_sqlite_backup(db):
+    """VACUUM INTO backup path, or None (abort) when it cannot be taken."""
+    try:
+        dblist = db.execute("PRAGMA database_list;").fetchall()
+        mainfile = next(
+            (
+                (r["file"] if isinstance(r, dict) else r[2])
+                for r in dblist
+                if (r["name"] if isinstance(r, dict) else r[1]) == "main"
+            ),
+            "",
+        )
+        if not mainfile or mainfile == ":memory:":
+            return None
+        from datetime import datetime, timezone
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        backup = f"{mainfile}.pre-mig-{stamp}.bak"
+        db.execute(f"VACUUM INTO '{backup.replace(chr(39), chr(39) * 2)}';")
+        return backup
+    except Exception as e:
+        print(f"WARN: pre-migration backup failed, aborting rebuild: {e}")
+        return None
+
+
+def _doc_sqlite_build_ddl(db):
+    """(create_table_ddl, copy_stmt) preserving every column, FK, default."""
+    cols = db.execute("PRAGMA table_info(source_documents)").fetchall()
+    coldefs = []
+    for c in cols:
+        nm = c["name"] if isinstance(c, dict) else c[1]
+        typ = c["type"] if isinstance(c, dict) else c[2]
+        nn = c["notnull"] if isinstance(c, dict) else c[3]
+        dflt = c["dflt_value"] if isinstance(c, dict) else c[4]
+        pk = c["pk"] if isinstance(c, dict) else c[5]
+        parts = [nm, typ or "TEXT"]
+        if pk:
+            parts.append("PRIMARY KEY")
+        elif nn:
+            parts.append("NOT NULL")
+        if dflt is not None:
+            d = dflt
+            if "(" in d and not (d.startswith("(") and d.endswith(")")):
+                d = f"({d})"
+            parts.append(f"DEFAULT {d}")
+        coldefs.append(" ".join(parts))
+    fks = db.execute("PRAGMA foreign_key_list(source_documents)").fetchall()
+    for fk in fks:
+        tbl = fk["table"] if isinstance(fk, dict) else fk[2]
+        frm = fk["from"] if isinstance(fk, dict) else fk[3]
+        to = fk["to"] if isinstance(fk, dict) else fk[4]
+        coldefs.append(f"FOREIGN KEY ({frm}) REFERENCES {tbl}({to})")
+    coldefs.append("UNIQUE(tenant_id, sha256)")
+    names = ", ".join((c["name"] if isinstance(c, dict) else c[1]) for c in cols)
+    ddl = "CREATE TABLE source_documents_new (%s);" % ", ".join(coldefs)
+    insert_sel = f"INSERT INTO source_documents_new ({names}) SELECT {names} FROM source_documents;"
+    return (ddl, insert_sel)
+
+
+def _doc_sqlite_drop_views(db, viewdefs):
+    for vname, _ in viewdefs:
+        db.execute(f'DROP VIEW IF EXISTS "{vname}";')
+
+
+def _doc_sqlite_create_views(db, viewdefs, only_missing):
+    if only_missing:
+        have = {
+            (r["name"] if isinstance(r, dict) else r[0])
+            for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'view';").fetchall()
+        }
+        viewdefs = [(n, s) for n, s in viewdefs if n not in have]
+    for _, vsql in viewdefs:
+        db.execute(vsql.rstrip(";") + ";")
+
+
+def _doc_sqlite_restore(db, viewdefs, backup):
+    """Best-effort restore after a failed rebuild. Returns restored bool."""
+    try:
+        tables = {
+            (r["name"] if isinstance(r, dict) else r[0])
+            for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table';").fetchall()
+        }
+        if "source_documents_new" in tables and "source_documents" not in tables:
+            db.execute("ALTER TABLE source_documents_new RENAME TO source_documents;")
+        elif "source_documents_new" in tables:
+            db.execute("DROP TABLE source_documents_new;")
+        _doc_sqlite_create_views(db, viewdefs, True)
+        db.execute("PRAGMA foreign_keys=ON;")
+        db.commit()
+        return True
+    except Exception as e2:
+        print(f"WARN: restore failed: {e2}; pre-migration backup at {backup}")
+        return False
+
+
+def _doc_sqlite_rebuild(db, viewdefs, backup):
+    """View-safe table rebuild. Returns True only when fully complete."""
+    try:
+        ddl, insert_sel = _doc_sqlite_build_ddl(db)
+        _doc_sqlite_drop_views(db, viewdefs)
+        db.execute("PRAGMA foreign_keys=OFF;")
+        db.execute(ddl)
+        db.execute(insert_sel)
+        db.execute("DROP TABLE source_documents;")
+        db.execute("ALTER TABLE source_documents_new RENAME TO source_documents;")
+        for sql in [
+            "CREATE INDEX IF NOT EXISTS idx_source_documents_tenant_sha ON source_documents(tenant_id, sha256);",
+            "CREATE INDEX IF NOT EXISTS idx_source_documents_uploaded_by ON source_documents(uploaded_by);",
+            "CREATE INDEX IF NOT EXISTS idx_source_documents_account ON source_documents(account_id);",
+            "CREATE INDEX IF NOT EXISTS idx_source_documents_account_number ON source_documents(account_number);",
+        ]:
+            db.execute(sql)
+        _doc_sqlite_create_views(db, viewdefs, False)
+        db.execute("PRAGMA foreign_keys=ON;")
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"WARN: doc table rebuild failed: {e}; attempting restore (backup at {backup})")
+        return _doc_sqlite_restore(db, viewdefs, backup)
+
+
+def _ensure_doc_tenant_sha_unique(db: DbHandle):
+    """Per-tenant dedup: UNIQUE(tenant_id, sha256) replaces global UNIQUE(sha256).
+
+    Fresh files get it inline. Old files: pg drops the old unique constraint(s)
+    and adds the composite; sqlite rebuilds the table (constraints cannot be
+    dropped there). Global-unique old data can never violate the composite,
+    so the copy is safe.
+    Rebuild safety: dependent views are saved + dropped first (SQLite refuses
+    DROP+RENAME while a view references the name), a VACUUM INTO backup is
+    taken first, and failure restores table + views from the surviving copy.
+    Fails loud-but-safe: data untouched, WARN printed.
+    """
+    if db.backend == "pg":
+        return _doc_pg_migrate(db)
+    state = _doc_sqlite_uniques(db)
+    if state is None:
+        return False
+    has_global, has_composite = state
+    if not has_global:
+        if not has_composite:
+            _doc_sqlite_ensure_composite(db)
+        return True
+    viewdefs = _doc_sqlite_viewdefs(db)
+    if viewdefs is None:
+        return False
+    backup = _doc_sqlite_backup(db)
+    if backup is None:
+        return False
+    return _doc_sqlite_rebuild(db, viewdefs, backup)
+
+
 def _ensure_span_dims(db: DbHandle):
     """Add page_width/page_height to old source_spans tables (Day-6 drill).
 
@@ -736,6 +975,7 @@ def _ensure_indexes(db: DbHandle):
             pass
 
     _ensure_dedup_index(db)
+    _ensure_doc_tenant_sha_unique(db)
     _ensure_span_dims(db)
 
     # Views for PowerBI star-schema per homework Part 5.10 - need to drop and recreate to include account_number per user per merchant per account enhancement

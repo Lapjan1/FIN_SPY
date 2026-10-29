@@ -289,3 +289,21 @@ Symptom: Upload page could not distinguish 402 trial-exhausted from generic fail
 Cause: api() helper threw `new Error(detail)` with no status attached.
 Fix: Attach res.status to the thrown error (backwards compatible) + isPaywallError/isAuthError helpers; upload branches 402 to a PaywallNotice with plans.
 Applies when: Any typed API client - carry status on errors so UI can branch (paywall, re-login) instead of string-matching messages.
+
+## 2026-10-29-50 SQLite rebuild must drop views first, backup first, restore never drop
+Symptom: First per-tenant migration lost 18 dev rows: DROP old + RENAME failed on dim_document view, except-path dropped the only surviving copy; table later recreated EMPTY by the fresh template (looked migrated, data gone).
+Cause: SQLite refuses DROP+RENAME while any view references the name; cleanup assumed the copy was expendable.
+Fix: Save/drop dependent views first, VACUUM INTO backup first (abort if backup fails), rebuild, recreate views, restore-on-failure (rename back, never drop the survivor); durable tests/test_doc_migration_rebuild.py rebuilds a scratch old-schema DB and byte-compares rows + views + backup. Prod pg untouched (ALTER-only path, constraint ops cannot drop rows).
+Applies when: Any SQLite table rebuild - views, backup, restore, and a scratch-copy proof before the real file.
+
+## 2026-10-29-51 Content store global, registration per-tenant
+Symptom: Second tenant uploading identical bytes got HTTP 200 with ZERO db row - nothing to extract, nothing in inbox; trial receipt looked normal.
+Cause: `if not storage_key.exists()` wrapped both the bytes-write AND the row insert, plus a global UNIQUE(sha256) schema constraint - first tenant wins, rest get phantoms.
+Fix: Bytes written once globally; rows always per tenant (doc_id = sha256(tenant|sha)[:16]); same-tenant re-upload returns duplicate:true with the existing row and consumes no quota; schema migrated both backends (pg ALTER, sqlite rebuild per learning 50).
+Applies when: Content-addressed storage + multi-tenancy - dedup the bytes, never the registration.
+
+## 2026-10-29-52 Python splice script for CRLF edits beats long PowerShell
+Symptom: A ~6KB PowerShell Replace-Once command died with weird parse errors (fingerprint: failures start mid-command) while short ones always worked.
+Cause: Transport/proxy mangles very long commands; PowerShell quoting of code-bearing strings does not scale.
+Fix: Write the snippet + a tiny splice script (markers, single-match asserts, byte-exact CRLF) as files via write_file, run `python splice.py`, verify with git diff + py_compile. Used for the 185-line db.py migration.
+Applies when: Any CRLF edit longer than a few lines - file-splice, never mega-commands.

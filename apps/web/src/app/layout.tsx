@@ -22,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <a href="/inbox">Inbox</a>
             <a href="/chat">Chat</a>
             <a href="/review">Review</a>
+            <a href="/help">Help</a>
             <a href="/privacy">Privacy</a>
             <a href="/terms">Terms</a>
             <a href="/refund">Refund</a>

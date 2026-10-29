@@ -100,6 +100,50 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
         except Exception as e2:
             raise RuntimeError(f"Both PyMuPDF and pdfplumber failed: {e} {e2}")
 
+
+
+TEXT_SUFFIXES = {".csv", ".txt", ".ofx", ".qif"}
+
+
+def extract_text_lines(text_path: Path) -> List[Dict]:
+    """Text-reader twin of extract_text_with_bbox for CSV/TXT/OFX uploads.
+
+    Same pages shape (one page, Lxxx ids, text_hash) so bank parsers,
+    the generic engine, and the LLM fallback all run unchanged. No pixel
+    boxes exist for text rows - persist falls back to its placeholder.
+    """
+    raw = text_path.read_bytes().decode("utf-8-sig", errors="replace")
+    # CSV: parse cells and space-join. Raw commas fuse adjacent amounts
+    # into one SA-format token (298.94,9701.06); spaces keep them apart.
+    if text_path.suffix.lower() == ".csv":
+        import csv as _csv
+        import io as _io
+        import re as _re
+        chunks = []
+        for row in _csv.reader(_io.StringIO(raw)):
+            joined = " ".join(c.strip() for c in row)
+            # ISO-style leading signs (-298.94): the generic engine reads
+            # direction from balance chaining, and a stray '-' would
+            # otherwise survive span-stripping into the description.
+            joined = _re.sub(r"(?<=\s)[-+](?=\d)", "", joined)
+            chunks.append(joined)
+    else:
+        chunks = raw.splitlines()
+    lines = []
+    counter = 1
+    for chunk in chunks:
+        stripped = chunk.strip()
+        if not stripped:
+            continue
+        line_id = f"L{counter:03d}"
+        counter += 1
+        lines.append({
+            "line_id": line_id,
+            "bbox": [0, 0, 100, 10],
+            "text": stripped,
+            "text_hash": hashlib.sha256(stripped.encode()).hexdigest()[:16],
+        })
+    return [{"page_no": 1, "width": None, "height": None, "lines": lines}]
 def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[ExtractionResult]:
     """
     Try deterministic parsers first in order based on bank_hint or detected bank from registry
@@ -297,7 +341,10 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     DB-first: result should be persisted to source_spans/transactions before returning
     Handles encrypted PDFs: password param transient, never logged/stored, if no password and encrypted raises needs_password
     """
-    pages = extract_text_with_bbox(pdf_path, password=password)
+    if pdf_path.suffix.lower() in TEXT_SUFFIXES:
+        pages = extract_text_lines(pdf_path)
+    else:
+        pages = extract_text_with_bbox(pdf_path, password=password)
     # Bank parser first (precision), generic engine second (recall),
     # whole-statement LLM strictly last resort (P0-A0/D9).
     result = deterministic_parse(pages, bank_hint)

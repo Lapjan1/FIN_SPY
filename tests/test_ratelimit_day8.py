@@ -150,4 +150,4 @@ def test_llm_fallback_accepts_tenant(monkeypatch):
     pages = [{"page_no": 1, "width": 595, "height": 842, "lines": [
         {"line_id": "L001", "bbox": [0, 0, 100, 10], "text": "x", "text_hash": "a"}]}]
     result = llm_fallback(pages, tenant_id="tenant-xyz")
-    assert len(result.rows) >= 1
+    assert result.rows == []  # P0-A0/Q3: never fabricate rows on failure

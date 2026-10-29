@@ -9,6 +9,7 @@ import {
   fetchTransactionsAuth,
   fetchTxnSources,
   formatRands,
+  rejectTransaction,
 } from '../../lib/api';
 
 export default function TransactionsPage() {
@@ -25,6 +26,9 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
   const [sources, setSources] = useState<TxnSources | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [voidReason, setVoidReason] = useState('');
+  const [voidWorking, setVoidWorking] = useState(false);
+  const [voidMsg, setVoidMsg] = useState('');
 
   async function load() {
     setLoading(true);
@@ -49,10 +53,29 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
     setSelected(txn);
     setSources(null);
     setError('');
+    setVoidReason('');
+    setVoidMsg('');
     try {
       setSources(await fetchTxnSources(uid, txn.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sources failed');
+    }
+  }
+
+  async function voidTxn() {
+    if (!selected || !voidReason.trim()) return;
+    if (!window.confirm(`Void ${selected.description_raw}? Posted journals are reversed; history stays.`)) return;
+    setVoidWorking(true);
+    setError('');
+    try {
+      const out = await rejectTransaction(uid, selected.id, voidReason.trim());
+      setVoidMsg(`Voided. Reversed journals: ${out.reversed_entry_ids.join(', ') || 'none (was never posted)'}.`);
+      setVoidReason('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Void failed');
+    } finally {
+      setVoidWorking(false);
     }
   }
 
@@ -102,6 +125,21 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
         </div>
 
         <div className="space-y-4">
+          {selected && selected.status !== 'rejected' ? (
+            <div className="border border-slate-800 rounded p-3 space-y-2">
+              <p className="text-sm font-semibold">Void this transaction</p>
+              <input
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+                placeholder="Reason (required, kept forever for audit)"
+                className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-sm"
+              />
+              <button onClick={voidTxn} disabled={voidWorking || !voidReason.trim()} className="bg-red-800 px-4 py-2 rounded text-sm disabled:opacity-50">
+                {voidWorking ? 'Working...' : 'Void with reversals'}
+              </button>
+              {voidMsg ? <p className="text-xs text-emerald-300">{voidMsg}</p> : null}
+            </div>
+          ) : null}
           {!selected ? (
             <p className="text-sm text-slate-400">Select a row to drill to its source.</p>
           ) : !sources ? (

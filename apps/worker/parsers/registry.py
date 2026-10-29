@@ -98,6 +98,44 @@ def set_active_template(tenant_id: str, template: str, db=None) -> str:
     db.commit()
     return template
 
+def ensure_coa_seeded(tenant_id: str, db=None) -> str:
+    """Ensure the tenant row + active-template COA exist. Returns active template.
+
+    Fresh tenants (upload -> suggest -> accept without opening books) get
+    their default personal books seeded on first use instead of failing with
+    'Seed COA first'. Only seeds the chosen template baseline - never creates
+    per-suggestion accounts, so the suggester cannot invent codes.
+    """
+    from apps.api.db import get_db as get_db_func
+    if db is None:
+        db = get_db_func()
+    try:
+        cur = db.execute("SELECT id FROM tenants WHERE id=?", (tenant_id,))
+        if not cur.fetchone():
+            db.execute(
+                "INSERT INTO tenants (id, name, active_template) VALUES (?,?,?)",
+                (tenant_id, f"Tenant {tenant_id}", "personal"),
+            )
+            db.commit()
+    except Exception:
+        pass
+    active = get_active_template(tenant_id, db=db)
+    try:
+        # Sentinel must be a template row: extraction creates a bank ledger
+        # row (same template, account_number set) before books are opened,
+        # so a bare COUNT would mistake it for a seeded COA.
+        cur = db.execute(
+            "SELECT id FROM accounts WHERE tenant_id=? AND template=?"
+            " AND code='9999' AND account_number IS NULL LIMIT 1",
+            (tenant_id, active),
+        )
+        if not cur.fetchone():
+            seed_coa(tenant_id, template=active, db=db)
+    except Exception:
+        pass
+    return active
+
+
 def seed_coa(tenant_id: str, template: str = "personal", db=None) -> int:
     """
     Seed COA for tenant from template per user choice: default personal and options mixed or business per merchant per account, for competition not lifetime project

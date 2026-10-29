@@ -123,9 +123,12 @@ def test_pack_endpoint():
         _seed(tenant, r.json()["id"])
         r = client.get("/v1/reports/evidence-pack", headers=h)
         assert r.status_code == 200
-        body = r.json()
-        assert Path(body["file_key"]).exists()
-        assert body["file_count"] >= 4
-        assert body["audit_head"], "endpoint must return the audit head"
+        assert r.headers["content-type"].startswith("application/zip")
+        import io
+        import zipfile
+        names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+        assert "manifest.json" in names
+        assert "manifest.sha256" in names
+        assert len(names) >= 4
     finally:
         cleanup_tenant(tenant)

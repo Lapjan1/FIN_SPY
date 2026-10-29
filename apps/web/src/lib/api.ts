@@ -115,6 +115,23 @@ export type Suggestion = {
   rationale: string;
   source: string;
   confidence: number;
+  account_name?: string;
+  account_type?: string;
+  active_template?: string;
+  mapped_from?: string;
+};
+
+export type AccountOption = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+};
+
+export type AccountsList = {
+  tenant_id: string;
+  active_template: string;
+  accounts: AccountOption[];
 };
 
 export type AcceptResult = {
@@ -157,6 +174,165 @@ export function fetchReviewQueue(userId: string): Promise<ReviewQueue> {
   return api<ReviewQueue>('/v1/review-queue', userId);
 }
 
+export function fetchAccounts(userId: string): Promise<AccountsList> {
+  return api<AccountsList>('/v1/accounts', userId);
+}
+
+// --- Books (P0-E). Trial balance + suspense + template switch. ---
+
+export type BookTemplate = {
+  name: string;
+  description: string;
+  count: number;
+};
+
+export type BooksActive = {
+  tenant_id: string;
+  active_template: string;
+  total_accounts: number;
+};
+
+export type TrialLine = {
+  account_id: string | null;
+  code: string;
+  name: string;
+  type: string;
+  debits: number;
+  credits: number;
+  net: number;
+};
+
+export type TrialBalance = {
+  tenant_id: string;
+  as_of: string | null;
+  entity_id: string | null;
+  account_number: string | null;
+  lines: TrialLine[];
+  total_debits: number;
+  total_credits: number;
+  balanced: boolean;
+  zero: boolean;
+};
+
+export type SuspenseStatus = {
+  tenant_id: string;
+  suspense_code: string;
+  balance_minor: number;
+  debits_minor: number;
+  credits_minor: number;
+  txn_count: number;
+  oldest_age_days: number | null;
+  total_debits_minor: number;
+  total_txns: number;
+  unposted_confirmed_count: number;
+  unposted_confirmed_ids: string[];
+  thresholds: { pct_limit: number; max_age_days: number };
+  status: 'ok' | 'review';
+  reasons: string[];
+};
+
+export function fetchBookTemplates(userId: string): Promise<{ templates: BookTemplate[] }> {
+  return api<{ templates: BookTemplate[] }>('/v1/books/templates', userId);
+}
+
+export function fetchActiveBook(userId: string): Promise<BooksActive> {
+  return api<BooksActive>('/v1/books/active', userId);
+}
+
+export function selectBook(userId: string, template: string): Promise<BooksActive & { message: string }> {
+  return api<BooksActive & { message: string }>('/v1/books/select', userId, {
+    method: 'POST',
+    body: JSON.stringify({ template }),
+  });
+}
+
+export function fetchTrialBalance(userId: string, accountNumber?: string): Promise<TrialBalance> {
+  const q = accountNumber ? `?account_number=${encodeURIComponent(accountNumber)}` : '';
+  return api<TrialBalance>(`/v1/journal/trial-balance${q}`, userId);
+}
+
+export function fetchSuspense(userId: string): Promise<SuspenseStatus> {
+  return api<SuspenseStatus>('/v1/journal/suspense', userId);
+}
+
+// --- Debt (P0-F). User-typed debts, ledger-backed extra-cash default. ---
+
+export type DebtInput = {
+  creditor: string;
+  balance_minor: number;
+  apr_pct: string;
+  min_payment_minor: number;
+};
+
+export type DebtPlan = {
+  method: string;
+  order: string[];
+  months: number;
+  total_paid_minor: number;
+  total_interest_minor: number;
+  interest_saved_minor: number;
+  warnings: string[];
+  narrative: string;
+  disclaimer: string;
+  what_if?: {
+    base_months: number;
+    boosted_months: number;
+    months_saved: number;
+    base_interest_minor: number;
+    boosted_interest_minor: number;
+    interest_saved_minor: number;
+    extra_per_month_minor: number;
+  };
+};
+
+export type DebtDefaults = {
+  tenant_id: string;
+  months: number;
+  avg_net_per_month_minor: number;
+  extra_cash_default_minor: number;
+};
+
+export function fetchDebtDefaults(userId: string): Promise<DebtDefaults> {
+  return api<DebtDefaults>('/v1/debt/defaults', userId);
+}
+
+export function postDebtPlan(
+  userId: string,
+  debts: DebtInput[],
+  method: string,
+  extraCashMinor: number,
+): Promise<DebtPlan> {
+  return api<DebtPlan>('/v1/debt/plan', userId, {
+    method: 'POST',
+    body: JSON.stringify({
+      debts,
+      method,
+      extra_cash_per_month_minor: extraCashMinor,
+    }),
+  });
+}
+
+export async function downloadReport(userId: string, path: string, filename: string): Promise<string> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: { 'X-User-Id': userId } });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const detail = (data as { detail?: string }).detail || `request failed ${res.status}`;
+    const err = new Error(detail) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return res.headers.get('x-report-warning') || '';
+}
+
 export function suggestClassification(
   userId: string,
   input: { description: string; account_number: string; entity_kind?: string; amount_minor?: number; direction?: string },
@@ -175,6 +351,23 @@ export function acceptTransaction(
   return api<AcceptResult>(`/v1/review-queue/${txnId}/accept`, userId, {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export type RejectResult = {
+  transaction_id: string;
+  status: string;
+  reversed_entry_ids: string[];
+};
+
+export function rejectTransaction(
+  userId: string,
+  txnId: string,
+  reason: string,
+): Promise<RejectResult> {
+  return api<RejectResult>(`/v1/review-queue/${txnId}/reject`, userId, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   });
 }
 
@@ -222,6 +415,10 @@ export function fetchFlags(userId: string): Promise<Flag[]> {
 
 export function fetchDocuments(userId: string): Promise<DocInfo[]> {
   return api<DocInfo[]>('/v1/documents', userId);
+}
+
+export function requeueDocument(userId: string, docId: string): Promise<{ id: string; status: string; requeued: boolean }> {
+  return api(`/v1/documents/${docId}/requeue`, userId, { method: 'POST' });
 }
 
 export function documentFileOptions(userId: string, docId: string) {

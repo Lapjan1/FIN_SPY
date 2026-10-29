@@ -8,7 +8,7 @@ export default function RefundPage() {
       <p className="updated text-sm text-gray-500">Last updated: October 26, 2026</p>
 
       <h2 className="text-xl font-semibold mt-8">Free Trial</h2>
-      <p className="text-gray-700 leading-7">All new accounts receive 20 free pages before any payment is required. This allows you to fully evaluate the service before committing. Your remaining pages are shown in the dashboard.</p>
+      <p className="text-gray-700 leading-7">All new accounts receive 20 free uploads before any payment is required. This allows you to fully evaluate the service before committing. Your remaining uploads are shown in the dashboard.</p>
 
       <h2 className="text-xl font-semibold mt-8">Subscription Cancellation</h2>
       <p className="text-gray-700 leading-7">You may cancel your subscription at any time from the Account page. Upon cancellation:</p>
@@ -30,12 +30,12 @@ export default function RefundPage() {
 
       <h2 className="text-xl font-semibold mt-8">Plans</h2>
       <ul className="list-disc pl-6 text-gray-700 leading-7">
-        <li>Free: 20 pages/mo R0</li>
-        <li>Individual: 200 pages/mo R149</li>
-        <li>SME: 1000 pages/mo R599, 2 entities</li>
+        <li>Free: 20 uploads/mo R0</li>
+        <li>Individual: 200 uploads/mo R149</li>
+        <li>SME: 1000 uploads/mo R599, 2 entities</li>
         <li>Practice: custom</li>
       </ul>
-      <p className="text-gray-700 leading-7">Metering counts pages processed, AI tokens used, and exports generated, with per-account monthly caps. Estimated AI cost is tracked per document, with a global daily budget alarm and an automatic fallback to No-AI mode if the budget is exceeded.</p>
+      <p className="text-gray-700 leading-7">Metering counts statement uploads, AI tokens used, and exports generated, with per-account monthly caps. Estimated AI cost is tracked per document, with a global daily budget alarm and an automatic fallback to No-AI mode if the budget is exceeded.</p>
 
       <footer className="text-center py-8 text-sm text-gray-500">
         <a href="/privacy" className="underline">Privacy</a> · <a href="/terms" className="underline">Terms</a> · <a href="/refund" className="underline">Refund</a>

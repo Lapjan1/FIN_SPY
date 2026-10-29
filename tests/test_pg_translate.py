@@ -41,6 +41,33 @@ def test_translate_view_or_replace():
     assert out == "CREATE OR REPLACE VIEW dim_date AS SELECT 1"
 
 
+def test_translate_or_replace_first_col_pk():
+    out = _pg()._translate(
+        "INSERT OR REPLACE INTO transactions (id, tenant_id) VALUES (?,?)"
+    )
+    assert out == (
+        "INSERT INTO transactions (id, tenant_id) VALUES (%s,%s)"
+        " ON CONFLICT (id) DO UPDATE SET tenant_id=EXCLUDED.tenant_id"
+    )
+
+
+def test_translate_or_replace_composite_pk():
+    # transaction_sources PRIMARY KEY (transaction_id, span_id): the old
+    # first-col assumption emitted ON CONFLICT (transaction_id), which
+    # Postgres rejects with 42P10 InvalidColumnReference - crashing persist
+    # after the txn row committed (pg autocommit) and stranding partial rows.
+    out = _pg()._translate(
+        "INSERT OR REPLACE INTO transaction_sources"
+        " (transaction_id, span_id, role) VALUES (?,?,?)"
+    )
+    assert out == (
+        "INSERT INTO transaction_sources (transaction_id, span_id, role)"
+        " VALUES (%s,%s,%s)"
+        " ON CONFLICT (transaction_id, span_id) DO UPDATE"
+        " SET span_id=EXCLUDED.span_id, role=EXCLUDED.role"
+    )
+
+
 def test_executescript_pg_skips_triggers(monkeypatch):
     ran = []
     db = _pg()
@@ -54,3 +81,21 @@ def test_executescript_pg_skips_triggers(monkeypatch):
     joined = "\n".join(ran)
     assert "TRIGGER" not in joined
     assert "CREATE TABLE t" in joined
+
+
+def test_executescript_pg_strips_comment_percent(monkeypatch):
+    # Live prod bug: a `--` schema comment containing `%` (merchant_memory
+    # header: "% allocation") reached psycopg2, which raised "tuple index
+    # out of range" with empty params - so merchant_memory was never
+    # created on Postgres and /v1/me/export 500'd with UndefinedTable.
+    ran = []
+    db = _pg()
+    monkeypatch.setattr(db, "execute", lambda sql, params=(): ran.append(sql))
+    db.executescript(
+        "-- Merchant memory: vendor grouping and % allocation, what if like?\n"
+        "CREATE TABLE merchant_memory (id TEXT PRIMARY KEY, tenant_id TEXT);\n"
+    )
+    assert len(ran) == 1
+    assert "%" not in ran[0]
+    assert "?" not in ran[0]
+    assert "CREATE TABLE merchant_memory" in ran[0]

@@ -101,8 +101,7 @@ def test_llm_fallback_resolves_when_unset():
     from apps.worker.parsers.extractor import llm_fallback, ExtractionResult
     result = llm_fallback(_pages())  # no keys -> mock path, hermetic
     assert isinstance(result, ExtractionResult)
-    assert len(result.rows) >= 1  # mock marker row, same as explicit-model path
-    assert result.rows[0].line_ids[0] == "L001"
+    assert result.rows == []  # P0-A0/Q3: never fabricate rows on failure
     assert result.warnings
 
 

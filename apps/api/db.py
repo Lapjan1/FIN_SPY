@@ -59,17 +59,20 @@ class DbHandle:
         sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
         # INSERT OR REPLACE -> ON CONFLICT DO UPDATE
         # Regex: INSERT OR REPLACE INTO table (col1,col2) VALUES (?,?)
+        # Most tables are first-col PK; composite keys are pinned here -
+        # a wrong target is Postgres 42P10 InvalidColumnReference.
+        conflict_targets = {"transaction_sources": "(transaction_id, span_id)"}
         def repl_or_replace(m):
             table = m.group(1)
             cols = m.group(2)
             placeholders = m.group(3)
-            # Assume first col is PK, conflict on it
             col_list = [c.strip() for c in cols.split(",")]
+            target = conflict_targets.get(table.lower(), f"({col_list[0]})")
             set_clause = ", ".join([f"{c}=EXCLUDED.{c}" for c in col_list[1:]])
             if set_clause:
-                return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT ({col_list[0]}) DO UPDATE SET {set_clause}"
+                return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT {target} DO UPDATE SET {set_clause}"
             else:
-                return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT ({col_list[0]}) DO NOTHING"
+                return f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) ON CONFLICT {target} DO NOTHING"
         sql = re.sub(r"INSERT OR REPLACE INTO (\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)", repl_or_replace, sql, flags=re.IGNORECASE)
         sql = sql.replace("INSERT OR REPLACE", "INSERT")
         # strftime() -> EXTRACT for dim_date (cols are TEXT 'YYYY-MM-DD').
@@ -113,6 +116,13 @@ class DbHandle:
             # view/trigger can never take down boot again (Oct28 crash).
             stmts = [s.strip() for s in re.split(r';\s*\n', sql.strip()) if s.strip()]
             for stmt in stmts:
+                # Strip full-line `--` comments: a literal % or ? inside a
+                # comment reaches psycopg2 param substitution and aborts the
+                # whole statement (prod: merchant_memory never created).
+                stmt = "\n".join(
+                    ln for ln in stmt.splitlines()
+                    if not ln.strip().startswith("--")
+                ).strip()
                 if not stmt:
                     continue
                 if re.search(r"\b(CREATE|DROP)\s+TRIGGER\b", stmt, re.I):
@@ -1242,6 +1252,16 @@ def _ensure_schema(db: DbHandle):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except Exception:
             pass  # column exists
+    # Composite PK for the txn<->span link table: ON CONFLICT
+    # (transaction_id, span_id) needs the matching constraint on pg.
+    try:
+        if db.backend == "pg":
+            db.execute(
+                "ALTER TABLE transaction_sources"
+                " ADD PRIMARY KEY (transaction_id, span_id)"
+            )
+    except Exception:
+        pass  # already exists
 
 # Helper: hash chain for audit_log
 def compute_row_hash(prev_hash: str, canonical_json: str) -> str:

@@ -25,9 +25,9 @@ from pathlib import Path
 
 from .db import init_db, get_db, append_audit_log, get_setting, env_or_setting, compute_row_hash, get_last_audit_hash
 from .auth import (
-    require_login, require_subscription, require_admin,
+    require_login, require_subscription, require_admin, require_owner_or_admin,
     create_user, verify_user, create_reset_token, verify_reset_token, use_reset_token,
-    get_user, get_trial_pages_remaining, check_session_secret, get_current_user_id, hash_password
+    get_user, get_trial_pages_remaining, check_session_secret, get_current_user_id, hash_password, is_admin_user
 )
 from .paystack import (
     has_paystack, get_paystack_pk, get_paystack_sk, initialize_transaction, verify_transaction,
@@ -240,6 +240,19 @@ def me(user_id: int = Depends(require_login)):
     trial = get_trial_pages_remaining(user_id)
     return {"user": user, "trial_pages_remaining": trial, "is_trial_unlimited": trial is None}
 
+@app.get("/v1/me/export")
+def export_my_data(user_id: int = Depends(require_login)):
+    """POPIA subject-access export: everything held on your tenant."""
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    from .reports import build_popia_zip
+    zip_path = build_popia_zip(tenant_id)
+    append_audit_log(tenant_id, user_id, "account.data_export", "users",
+                     str(user_id), {"file": Path(zip_path).name})
+    return FileResponse(zip_path, media_type="application/zip",
+                        filename=f"finspy-my-data-{_safe_name(tenant_id, 'export')}.zip")
+
+
 # --- Health with env guard ---
 @app.get("/health")
 def health():
@@ -287,7 +300,7 @@ async def upload_document(
     # Trial pages check
     remaining = get_trial_pages_remaining(user_id)
     if remaining is not None and remaining <= 0:
-        raise HTTPException(402, "Trial pages exhausted - subscribe")
+        raise HTTPException(402, "Trial uploads exhausted - subscribe")
 
     sha = sha256_bytes(data)
     VAULT_PATH.mkdir(parents=True, exist_ok=True)
@@ -482,6 +495,45 @@ def get_document_file(doc_id: str, user_id: int = Depends(require_login)):
         raise HTTPException(404, "Vault file missing for document")
     return FileResponse(str(path), media_type="application/pdf", filename=fname or "document.pdf")
 
+@app.post("/v1/documents/{doc_id}/requeue")
+def requeue_document(doc_id: str, user_id: int = Depends(require_login)):
+    """Retry a failed document: exception -> queued for the worker.
+
+    Re-uploading identical bytes returns duplicate:true without reprocessing,
+    so this is the only path to re-run a failed extraction (e.g. after the
+    extraction model was fixed). Owner-only, consumes no trial, audit-logged.
+    """
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    cur = db.execute("SELECT * FROM source_documents WHERE id=?", (doc_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    doc = dict(row) if not isinstance(row, dict) else row
+    if doc.get("tenant_id") != tenant_id:
+        raise HTTPException(403, "Cross-tenant access denied - isolation guard")
+    status = doc.get("status")
+    if status == "queued":
+        return {"id": doc_id, "status": "queued", "requeued": False}
+    if status != "exception":
+        raise HTTPException(
+            422,
+            "Invalid parameters: only failed (exception) documents can be"
+            f" requeued, got '{status}'",
+        )
+    db.execute("UPDATE source_documents SET status='queued' WHERE id=?", (doc_id,))
+    append_audit_log(
+        tenant_id,
+        user_id,
+        "document.requeue",
+        "source_documents",
+        doc_id,
+        {"from": status, "to": "queued"},
+    )
+    db.commit()
+    return {"id": doc_id, "status": "queued", "requeued": True}
+
+
 @app.get("/v1/books/templates")
 def list_book_templates(user_id: int = Depends(require_login)):
     from apps.worker.parsers.registry import get_coa_templates
@@ -498,6 +550,54 @@ def get_active_book(user_id: int = Depends(require_login)):
     r = cur.fetchone()
     total = r["cnt"] if isinstance(r, dict) else r[0]
     return {"tenant_id": tenant_id, "active_template": active, "total_accounts": total}
+
+@app.get("/v1/accounts")
+def list_accounts(user_id: int = Depends(require_login)):
+    """Active-books chart of accounts (code + name) for the review selector.
+
+    Seeded on first use so a fresh tenant always has a valid list. Bank
+    ledger rows (per account_number) are excluded - this is the category
+    list acceptance may post to, in the same order the books use.
+    """
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    from apps.worker.parsers.registry import ensure_coa_seeded
+
+    active = ensure_coa_seeded(tenant_id, db=db)
+    cur = db.execute(
+        "SELECT id, code, name, type, account_number FROM accounts"
+        " WHERE tenant_id=? AND template=? ORDER BY code ASC",
+        (tenant_id, active),
+    )
+    rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+    seed_prefix = f"acc-{tenant_id}-{active}-"
+    rows.sort(
+        key=lambda d: (
+            d.get("code") or "",
+            0 if str(d.get("id") or "").startswith(seed_prefix) else 1,
+            0 if not d.get("account_number") else 1,
+        )
+    )
+    seen = set()
+    accounts = []
+    for d in rows:
+        if d.get("account_number") or d.get("code") in seen:
+            continue
+        seen.add(d.get("code"))
+        accounts.append(
+            {
+                "id": d.get("id"),
+                "code": d.get("code"),
+                "name": d.get("name"),
+                "type": d.get("type"),
+            }
+        )
+    return {
+        "tenant_id": tenant_id,
+        "active_template": active,
+        "accounts": accounts,
+    }
+
 
 @app.post("/v1/books/select")
 def select_book(inp: BooksSelectIn, user_id: int = Depends(require_login)):
@@ -624,6 +724,28 @@ def debt_plan(req: DebtPlanRequest, user_id: int = Depends(require_login)):
         out["what_if"] = what_if_extra(debts, req.extra_cash_per_month_minor, req.method)
     return out
 
+@app.get("/v1/debt/defaults")
+def debt_defaults(user_id: int = Depends(require_login)):
+    """Extra-cash default from the tenant's own ledger: average monthly net
+    (inflow minus outflow) across months with postings. Clamped at zero -
+    a negative average never prefills negative cash."""
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    cur = db.execute(
+        "SELECT substr(txn_date, 1, 7) AS month,"
+        " SUM(CASE WHEN direction='credit' THEN amount_minor"
+        " WHEN direction='debit' THEN -ABS(amount_minor) ELSE 0 END) AS net"
+        " FROM transactions WHERE tenant_id=? AND status != 'rejected'"
+        " GROUP BY month",
+        (tenant_id,))
+    nets = [int(r["net"] if isinstance(r, dict) else r[1]) for r in cur.fetchall()]
+    months = len(nets)
+    avg = int(round(sum(nets) / months)) if months else 0
+    return {"tenant_id": tenant_id,
+            "months": months,
+            "avg_net_per_month_minor": avg,
+            "extra_cash_default_minor": max(avg, 0)}
+
 @app.post("/v1/spy/run")
 def spy_run(user_id: int = Depends(require_login)):
     """Run Day-5 spy detectors over tenant transactions, persist flags.
@@ -697,19 +819,51 @@ def create_report(kind: str = "excel", request: Request = None, user_id: int = D
     append_audit_log(tenant_id, user_id, f"report.create.{kind}", "reports", report_id, {"kind": kind})
     db.commit()
 
-    # If powerbi kind, generate immediately per homework Part 5.10
-    if kind == "powerbi":
-        try:
+    # P0-J (D8): no queue - every known kind generates synchronously.
+    # Unknown kinds 422 instead of vanishing into a fake 'queued' state.
+    known = ("powerbi", "excel", "auditor-csv", "evidence-pack", "signed-pdf")
+    if kind not in known:
+        raise HTTPException(
+            422,
+            f"Invalid parameters: unknown report kind '{kind}'. "
+            f"Expected one of {', '.join(known)}",
+        )
+    try:
+        if kind == "powerbi":
             from .reports import generate_powerbi_pack
             pack = generate_powerbi_pack(tenant_id)
-            # Update report with file info
             db.execute("UPDATE reports SET file_key=?, file_sha256=?, manifest_key=? WHERE id=?", (pack["file_key"], pack["sha256"], pack["csv_dir"], report_id))
             db.commit()
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": pack["file_key"], "sha256": pack["sha256"], "counts": pack["counts"], "csv_dir": pack["csv_dir"]}
-        except Exception as e:
-            return {"id": report_id, "kind": kind, "status": "failed", "error": str(e)}
-
-    return {"id": report_id, "kind": kind, "status": "queued"}
+        if kind == "excel":
+            from .reports import generate_excel_workbook
+            wb = generate_excel_workbook(tenant_id)
+            db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (wb["file_key"], wb["sha256"], report_id))
+            db.commit()
+            return {"id": report_id, "kind": kind, "status": "ready", "file_key": wb["file_key"], "sha256": wb["sha256"]}
+        if kind == "auditor-csv":
+            from .reports import generate_auditor_csv
+            csv_pack = generate_auditor_csv(tenant_id)
+            db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (csv_pack["file_key"], csv_pack["sha256"], report_id))
+            db.commit()
+            return {"id": report_id, "kind": kind, "status": "ready", "file_key": csv_pack["file_key"], "sha256": csv_pack["sha256"], "count": csv_pack["count"]}
+        if kind == "evidence-pack":
+            from .reports import generate_evidence_pack
+            pack = generate_evidence_pack(tenant_id)
+            db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (pack["file_key"], pack["sha256"], report_id))
+            db.commit()
+            return {"id": report_id, "kind": kind, "status": "ready", "file_key": pack["file_key"], "sha256": pack["sha256"], "file_count": pack["file_count"]}
+        from .signing import build_and_sign
+        out = build_and_sign(tenant_id, None, None)
+        db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (out["file_key"], out["sha256"], report_id))
+        db.commit()
+        return {"id": report_id, "kind": kind, "status": "ready", "file_key": out["file_key"], "sha256": out["sha256"]}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        return {"id": report_id, "kind": kind, "status": "failed", "error": str(e)}
 
 @app.get("/v1/reports/powerbi")
 def get_powerbi_pack(user_id: int = Depends(require_login)):
@@ -720,13 +874,14 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
     db = get_db()
     tenant_id = _tenant_of(user_id)
 
-    from .reports import generate_powerbi_pack
+    from .reports import generate_powerbi_pack, bundle_powerbi_zip
     pack = generate_powerbi_pack(tenant_id)
 
     # Audit log
     append_audit_log(tenant_id, user_id, "report.powerbi", "reports", pack["file_key"], {"counts": pack["counts"]})
 
-    return pack
+    return FileResponse(bundle_powerbi_zip(pack), media_type="application/zip",
+                        filename=f"finspy-powerbi-{_safe_name(tenant_id, 'export')}.zip")
 
 @app.post("/v1/images/generate")
 def images_generate(req: ImageGenIn, user_id: int = Depends(require_login)):
@@ -765,11 +920,10 @@ def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login))
                      pack["report_id"],
                      {"sha256": pack["sha256"], "file_count": pack["file_count"],
                       "signed": pack.get("signed", False)})
-    return {"file_key": pack["file_key"], "sha256": pack["sha256"],
-            "report_id": pack["report_id"], "file_count": pack["file_count"],
-            "audit_head": pack["manifest"]["audit_chain"]["head_hash"],
-            "signed": pack.get("signed", False),
-            "sign_warning": pack.get("sign_warning")}
+    _warn = (pack.get("sign_warning") or "")[:200]
+    return FileResponse(pack["file_key"], media_type="application/zip",
+                        filename=f"finspy-evidence-{_safe_name(pack['report_id'], 'pack')}.zip",
+                        headers={"X-Report-Warning": _warn} if _warn else None)
 
 @app.get("/v1/reports/signed-pdf")
 def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
@@ -789,10 +943,10 @@ def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = De
     append_audit_log(tenant_id, user_id, "report.signed_pdf", "reports",
                      out["file_key"], {"sha256": out["sha256"],
                                        "timestamped": out["signed"]["timestamped"]})
-    return {"file_key": out["file_key"], "sha256": out["sha256"],
-            "timestamped": out["signed"]["timestamped"],
-            "warning": out["signed"]["warning"],
-            "from_date": out["from_date"], "to_date": out["to_date"]}
+    _warn = (out["signed"]["warning"] or "")[:200]
+    return FileResponse(out["file_key"], media_type="application/pdf",
+                        filename=f"finspy-summary-{_safe_name(from_date, 'all')}-to-{_safe_name(to_date, 'all')}.pdf",
+                        headers={"X-Report-Warning": _warn} if _warn else None)
 
 @app.get("/v1/reports/excel")
 def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
@@ -808,7 +962,9 @@ def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int 
     except ValueError as e:
         raise HTTPException(422, str(e))
     append_audit_log(tenant_id, user_id, "report.excel", "reports", wb["file_key"], {"sha256": wb["sha256"]})
-    return wb
+    return FileResponse(wb["file_key"],
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        filename=f"finspy-workbook-{_safe_name(from_date, 'all')}-to-{_safe_name(to_date, 'all')}.xlsx")
 
 @app.get("/v1/reports/auditor-csv")
 def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] = None, user_id: int = Depends(require_login)):
@@ -839,7 +995,8 @@ def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] 
         from datetime import datetime, timezone
         from apps.api.reports import REPORTS_PATH
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        csv_path = REPORTS_PATH / f"auditor_export_vendor_{vendor}_{tenant_id}_{timestamp}.csv"
+        safe_vendor = _safe_name(vendor, "vendor")
+        csv_path = REPORTS_PATH / f"auditor_export_vendor_{safe_vendor}_{tenant_id}_{timestamp}.csv"
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         with csv_path.open('w', newline='', encoding='utf-8') as f:
             fieldnames = ["id","date","description","amount_minor","amount_rands","currency","direction","balance_after_minor","fingerprint","status","account_number","bank_name","branch_code","account_code","account_name","account_type","nature","business_pct","category_id","rationale","confidence","source","decided_by","document_id","original_filename","doc_sha256"]
@@ -851,11 +1008,13 @@ def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] 
                 })
         sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest() if csv_path.exists() else ""
         append_audit_log(tenant_id, user_id, "report.auditor_csv.vendor", "reports", str(csv_path), {"vendor": vendor, "account_number": account_number, "count": len(rows), "sha256": sha256})
-        return {"file_key": str(csv_path), "sha256": sha256, "count": len(rows), "vendor": vendor, "account_number": account_number, "message": f"Exported vendor {vendor} with {len(rows)} transactions to {csv_path}, add all transactions to certain account if you like per user, sort and add rule, if certain code applies journal auto books other side"}
+        return FileResponse(str(csv_path), media_type="text/csv",
+                            filename=f"finspy-auditor-{safe_vendor}.csv")
 
     csv_pack = generate_auditor_csv(tenant_id)
     append_audit_log(tenant_id, user_id, "report.auditor_csv", "reports", csv_pack["file_key"], {"count": csv_pack["count"], "sha256": csv_pack["sha256"]})
-    return csv_pack
+    return FileResponse(csv_pack["file_key"], media_type="text/csv",
+                        filename="finspy-auditor.csv")
 
 @app.get("/v1/reports/{report_id}")
 def get_report(report_id: str, user_id: int = Depends(require_login)):
@@ -1021,6 +1180,55 @@ def update_settings(inp: SettingsUpdateIn, user_id: int = Depends(require_admin)
     db.commit()
     return {"ok": True, "key": inp.key, "value": inp.value if "secret" not in inp.key.lower() else "***REDACTED***"}
 
+
+
+# Owner-safe preference keys (non-secret, non-billing). trial_/cost keys stay
+# admin-only: an owner must not mint free uploads or lift rate guards.
+OWNER_PREF_PREFIXES = ("model", "effort", "ai_provider", "ollama_url",
+                       "freellmapi_", "show_exact")
+
+
+@app.get("/v1/settings/preferences")
+def get_preferences(user_id: int = Depends(require_owner_or_admin)):
+    """Non-secret model/effort preferences for owners and admins.
+
+    Never includes secret/billing keys - those live behind /v1/settings
+    (admin-only)."""
+    db = get_db()
+    cur = db.execute("SELECT key, value FROM settings ORDER BY key")
+    result = {}
+    for r in cur.fetchall():
+        k = r["key"] if isinstance(r, dict) else r[0]
+        v = r["value"] if isinstance(r, dict) else r[1]
+        kl = k.lower()
+        if any(sub in kl for sub in ("secret", "api_key", "password", "paystack")):
+            continue
+        if kl.startswith(OWNER_PREF_PREFIXES) or kl in OWNER_PREF_PREFIXES:
+            result[k] = v
+    return result
+
+
+@app.post("/v1/settings/preferences")
+def update_preference(inp: SettingsUpdateIn,
+                      user_id: int = Depends(require_owner_or_admin)):
+    kl = inp.key.lower()
+    forbidden_exact = ["meta_api_key", "paystack_secret_key", "session_secret",
+                       "paystack_public_key", "paystack_plan_code",
+                       "paystack_plan_codes_json", "flask_secret"]
+    if kl in forbidden_exact or "secret" in kl:
+        raise HTTPException(400, f"{inp.key} must be env var per security guide, "
+                            "not settings table (fail-closed)")
+    if not (kl.startswith(OWNER_PREF_PREFIXES) or kl in OWNER_PREF_PREFIXES):
+        if not is_admin_user(user_id):
+            raise HTTPException(403, f"{inp.key} is admin-only (billing/security key)")
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)",
+               (inp.key, inp.value))
+    append_audit_log(tenant_id, user_id, "settings.preference", "settings",
+                     inp.key, {"key": inp.key})
+    db.commit()
+    return {"ok": True, "key": inp.key, "value": inp.value}
 @app.get("/privacy")
 def privacy():
     # Serve real POPIA content from docs/legal/privacy.md
@@ -1032,13 +1240,13 @@ def privacy():
 def terms():
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "terms.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Terms"
-    return {"page": "terms", "last_updated": "2026-10-26", "source": "docs/legal/terms.md", "content_markdown": content[:5000], "billing": "Free 20 pages R0, Individual 200 R149/mo, SME 1000 R599/mo", "law": "South Africa", "ai_disclosure": "court-ready per ECTA s15, not guaranteed"}
+    return {"page": "terms", "last_updated": "2026-10-26", "source": "docs/legal/terms.md", "content_markdown": content[:5000], "billing": "Free 20 uploads R0, Individual 200 R149/mo, SME 1000 R599/mo", "law": "South Africa", "ai_disclosure": "court-ready per ECTA s15, not guaranteed"}
 
 @app.get("/refund")
 def refund():
     doc_path = Path(__file__).parent.parent.parent / "docs" / "legal" / "refund.md"
     content = doc_path.read_text(encoding="utf-8") if doc_path.exists() else "Refund"
-    return {"page": "refund", "last_updated": "2026-10-26", "source": "docs/legal/refund.md", "content_markdown": content[:5000], "free_trial": "20 pages", "exception": ">48h downtime pro-rata"}
+    return {"page": "refund", "last_updated": "2026-10-26", "source": "docs/legal/refund.md", "content_markdown": content[:5000], "free_trial": "20 uploads", "exception": ">48h downtime pro-rata"}
 
 @app.get("/ai-disclosure")
 def ai_disclosure():
@@ -1163,6 +1371,10 @@ class ReviewAcceptIn(BaseModel):
     reason: str
 
 
+
+
+class ReviewRejectIn(BaseModel):
+    reason: str
 class ReviewEditIn(BaseModel):
     description_raw: Optional[str] = None
     txn_date: Optional[str] = None
@@ -1181,6 +1393,13 @@ def _tenant_of(user_id: int) -> str:
     if isinstance(row, dict):
         return row.get("tenant_id") or "default-tenant"
     return row[0] if row else "default-tenant"
+
+
+def _safe_name(value, fallback="file"):
+    """Download filename fragment: alphanumerics only (traversal-proof)."""
+    import re
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", str(value or ""))
+    return cleaned[:32] or fallback
 
 
 @app.post("/v1/journal/post")
@@ -1231,6 +1450,7 @@ def journal_post(inp: JournalPostIn, user_id: int = Depends(require_login)):
 def journal_trial_balance(
     as_of: Optional[str] = None,
     entity_id: Optional[str] = None,
+    account_number: Optional[str] = None,
     user_id: int = Depends(require_login),
 ):
     tenant_id = _tenant_of(user_id)
@@ -1239,7 +1459,8 @@ def journal_trial_balance(
     from .ledger import trial_balance
 
     try:
-        return trial_balance(tenant_id, as_of=as_of, entity_id=entity_id)
+        return trial_balance(tenant_id, as_of=as_of, entity_id=entity_id,
+                             account_number=account_number)
     except ValueError as e:
         raise HTTPException(422, str(e))
 
@@ -1459,6 +1680,33 @@ def review_accept(
         "classification": cls,
         "journal_entry": entry,
     }
+
+
+@app.post("/v1/review-queue/{txn_id}/reject")
+def review_reject(
+    txn_id: str, inp: ReviewRejectIn, user_id: int = Depends(require_login)
+):
+    """Reject (proposed) or void (posted, via reversals). Append-only history."""
+    tenant_id = _tenant_of(user_id)
+    txn = _load_owned_review_txn(txn_id, tenant_id)
+    reason = _require_review_reason(inp.reason)
+    from .ledger import void_transaction
+
+    try:
+        out = void_transaction(tenant_id, txn_id, reason, created_by=user_id)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    append_audit_log(
+        tenant_id,
+        user_id,
+        "review.reject",
+        "transactions",
+        txn_id,
+        {"from_status": txn.get("status"), "reversed_entry_ids": out["reversed_entry_ids"]},
+    )
+    return out
 
 
 def _collect_txn_updates(txn: dict, inp: ReviewEditIn) -> dict:

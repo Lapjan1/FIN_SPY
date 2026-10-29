@@ -307,3 +307,27 @@ Symptom: A ~6KB PowerShell Replace-Once command died with weird parse errors (fi
 Cause: Transport/proxy mangles very long commands; PowerShell quoting of code-bearing strings does not scale.
 Fix: Write the snippet + a tiny splice script (markers, single-match asserts, byte-exact CRLF) as files via write_file, run `python splice.py`, verify with git diff + py_compile. Used for the 185-line db.py migration.
 Applies when: Any CRLF edit longer than a few lines - file-splice, never mega-commands.
+
+## 2026-10-29-53 Suggester must speak the active books + seed sentinel must be a template row
+Symptom: Accept failed on a fresh tenant with "code '9999' does not exist ... Seed COA first", and the suggester proposed sme_cc codes (6200/6100/6600) while the tenant worked in personal books, shown as a bare code with no name.
+Cause: (1) COA was seeded only via POST /v1/books/select, which the upload->review->accept flow never calls. (2) classify._category_for hardcodes sme_cc numbering, unvalidated against the active template. (3) First fix attempt gated seeding on COUNT(accounts) - but extraction creates a bank ledger row (same template, account_number set) first, so the count lied.
+Fix: registry.ensure_coa_seeded sentinel = template row 9999 with account_number IS NULL (seed_coa is idempotent, fills the rest); wired into ledger.resolve_account + classify suggest + GET /v1/accounts; classify remaps raw codes per template (e.g. 6200->6030 personal, salary inflow 6300->4000) and enriches {account_name, account_type, active_template, mapped_from}; review UI shows code-name-type + dropdown from /v1/accounts + Use-suggestion. Tests tests/test_suggest_seed_wiring.py (16).
+Applies when: Any "seeded?" gate on a table that holds more than one row kind - gate on the sentinel row, never a bare count.
+
+## 2026-10-29-54 Dead-default LLM + duplicate-trap blocks all retries
+Symptom: 3-page FNB text statement processed to exception + 0 rows; re-uploading did nothing (duplicate:true, no reprocess); Settings model switch unreachable (admin-only, user is owner-role).
+Cause: (1) resolve_model default is freellmapi/localhost:3001, unreachable in Railway, so any doc below the 10% deterministic threshold gets 0 LLM rows in prod. (2) No requeue path existed.
+Fix: MODEL_EXTRACTION=muse-spark-1.3 env on FIN_SPY (standard tier, user-approved, never contributor) + POST /v1/documents/{id}/requeue (owner-only, exception->queued, no trial use, 5 tests) + Inbox Retry button + PII-free parser-attempt counts in logs. Deployed both, verified live.
+Applies when: Any pipeline with dedup-on-identical-bytes MUST ship a requeue path, and every localhost default must fail loudly in prod, not silently return empty.
+
+## 2026-10-29-55 First-col-PK assumption + pg autocommit = partial garbage per retry
+Symptom: Every persist crashed on pg 42P10 InvalidColumnReference AFTER the txn row committed (pg autocommit=True): each Retry added exactly one more visible row with no bbox link (user's R8/R1/R1 from 3 retries of Absa-garbage; "rows 0" log hid it because result=None on crash).
+Cause: _translate rewrote every INSERT OR REPLACE to ON CONFLICT (first_col), but transaction_sources PRIMARY KEY is (transaction_id, span_id) composite - no such single-col constraint. SQLite never caught it (no ON CONFLICT there). No test pinned translation output.
+Fix: Per-table conflict targets in _translate + PK-ensure migration for pg + worker FAILED prints include message text only for schema-shape error classes (identifiers, never row values). 2 translate tests; all OR REPLACE tables audited first-col-PK (only sources is composite).
+Applies when: Any SQL-dialect translation layer - pin EVERY generated statement shape with a pure unit test, and never assume key shape; autocommit + crash = partial writes, so persist order must fail toward invisible leftovers.
+
+## 2026-10-29-56 SQL comment text reaches the driver - strip it before execute
+Symptom: GET /v1/me/export 500 on Railway (UndefinedTable merchant_memory) while the full local suite was green; boot log showed WARN tuple-index-out-of-range on the merchant_memory statement.
+Cause: A `--` schema comment above the CREATE contained a literal `%` ("% allocation"). executescript pg path passed the whole statement (comments included) to psycopg2, whose %-format param substitution choked with empty params - so the CREATE never ran on Postgres. SQLite executescript ignores comments, so local never caught it.
+Fix: executescript pg path strips full-line `--` comments before execute (apps/api/db.py:119-125); regression test_executescript_pg_strips_comment_percent in tests/test_pg_translate.py. Redeployed API, table created at boot, export 200 live.
+Applies when: Any code that hands multi-statement SQL (with comments) to a %-formatting driver - sanitize or strip comments first; pin with a pure test.

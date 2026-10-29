@@ -1,0 +1,178 @@
+FIN_SPY: MAKE-THE-PROMISES-TRUE PLAN (DRAFT)
+Date: 2026-10-29. Status: APPROVED - Q1/Q2/Q3 all YES 2026-10-29.
+Added D9/G11/P0-A0 (generic extractor) per owner note; P0-I folded into it.
+Goal: every marketing claim below becomes literally true in the running
+app, with downloads for each deliverable, in this hackathon window.
+
+THE FOUR PROMISES (your words)
+P1 Proof, not just numbers: click any txn, see the highlighted source line;
+  SHA256 vault + hash-chained audit, ready for accountant or dispute.
+P2 Books that build themselves: private/business classification, journals,
+  trial balances PER BANK ACCOUNT; confirm/correct with reason, revisioned.
+P3 Spy for leaks: subscriptions, duplicates, fees, anomalies, leak score,
+  runway/burn/savings KPIs.
+P4 Kill debt + exports: snowball/avalanche on REAL cashflow, plus Excel,
+  signed PDF, evidence-pack exports an auditor can verify independently.
+
+WHERE WE ARE (read from code + live probes, 2026-10-29)
+- P1: viewer real (/transactions + react-pdf bbox overlay + vault file API).
+  Gaps: rows stranded linkless by the late Oct29 persist crash need
+  re-extraction; audit trail is API-only, no screen.
+- P2: review flow real and verified live (suggest/accept/edit, reasons,
+  revisions, merchant memory). Gaps: trial balance has NO per-account
+  filter and NO screen; suspense + book-switch + reject/void have NO UI.
+- P3: DONE end to end (/dashboard charts + spy run + flags + KPIs).
+- P4: debt maths real, zero UI, inputs fully manual (no cashflow link).
+  Excel/PowerBI/CSV/pack/PDF all GENERATE real files server-side but return
+  a server path string: no byte download, no Reports screen. Report-job
+  queue for non-powerbi kinds has no consumer (stuck "queued" forever).
+- Cross-cutting: email wired but mock-logs without a key; Settings is
+  admin-only so owner-role users get 403; LLM-failure path fabricates
+  R100 mock rows (a test pins this - product call needed, see D7).
+
+ARCHITECTURE (confirmed, keep it)
+Extractor -> normalized OLTP DB -> representation builders read ONLY the
+DB -> stateless download serving. Tables are normalized (tenants, docs,
+txns, spans, classifications, accounts, journal entries/lines, flags,
+audit); star-schema VIEWS serve PowerBI. Nothing builds reports from raw
+extraction output. Rule for this plan: downloads regenerate bytes on each
+request and stream them (FileResponse); nothing report-like persists on
+the ephemeral disk. The vault alone lives on the Railway volume.
+
+PERSONA CONFERENCE (all five read the tree before speaking)
+- PLANNER: P3 is done; sequence P0 = downloads + trial-per-account +
+  debt UI + reject + settings access + mock-rows + queue removal. One
+  deploy per phase, smoke each live. Do NOT start vendors/audit screens.
+- AI ENGINEER: extraction is deterministic-first, LLM-second, both real.
+  Keep bank-gating. Never invent rows: failures must return zero rows +
+  loud warnings. Cap LLM pages per doc; log tokens per tenant for cost.
+- BOOKKEEPER: per-account trial balance is the missing books primitive;
+  suspense must be visible or parked money hides; voiding must REVERSE
+  journals append-only, never delete - the chain is the product.
+- PROGRAMMER: reuse existing builders (reports.py, debt.py, ledger.py);
+  add thin download wrappers + three small screens. Every unit: focused
+  test first, ruff + pyright + tsc clean, golden green where touched.
+- HACKER: attack surface is downloads (path traversal -> generate, never
+  serve by path), tenant isolation on every byte (re-check owner before
+  streaming), and key hygiene (no secrets in logs/settings payloads).
+  POPIA export must EXCLUDE password hashes and other tenants' rows.
+
+KEY DECISIONS (recommendation first, rejects noted)
+D1 Downloads stream bytes, generated on request. Reject persisted files
+  (ephemeral disk) and path-serving (traversal risk).
+D2 POPIA data ZIP contains: profile, docs metadata + original PDFs, txns,
+  classifications, journals, flags, audit entries, manifest.json, README.
+  Excludes password hashes + secrets. NEEDS YOUR YES on originals inside.
+D3 Debt screen: debts typed by user, extra-cash DEFAULTS from ledger avg
+  monthly net (runway/burn already computed). No auto-detect of debts yet.
+  Reject full auto-detect (unreliable, hackathon scope).
+D4 Trial balance gains account_number filter (same pattern as dashboard).
+D5 Reject/void = status rejected + reversal journals via existing repost
+  machinery, never delete. NEEDS YOUR YES (touches posted books).
+D6 Tenant owners (not just admins) may change model/effort; keys stay
+  admin-only. Reject per-tenant settings table (too big for window).
+D7 LLM failure returns ZERO rows + error, never mock rows. Test update
+  included. NEEDS YOUR YES (overrides a pinned test).
+D8 Delete the report-job queue path; every kind generates synchronously
+  on download and the reports row becomes a download log.
+D9 Generic bank-agnostic extractor sits between bank parsers and LLM:
+  bank>=10% wins; elif generic chained coverage>=50% wins; else whole-
+  statement LLM as last resort only. Reject LLM-first (cost, halluci-
+  nation). Generic win = chained rows via running-balance validation.
+
+GOALS TABLE (ID | Goal | Promise | State)
++-----+----------------------------------+------+---------+
+| G1  | Byte downloads for 5 outputs     | P4   | missing |
+| G2  | Reports screen w/ buttons        | P4   | missing |
+| G3  | POPIA data ZIP download          | P4   | missing |
+| G4  | Trial balance per account + view | P2   | missing |
+| G5  | Books screen: switch+suspense    | P2   | missing |
+| G6  | Debt screen + cashflow default   | P4   | missing |
+| G7  | Reject/void flow                 | P2   | missing |
+| G8  | Owner access to model settings   | P1-4 | partial |
+| G9  | Zero-row LLM failure (no mock)   | P1   | partial |
+| G10 | Kill dead report queue           | P4   | missing |
+| G11 | Generic 95% extractor + route    | P1-2 | missing |
++-----+----------------------------------+------+---------+
+
+TODO LIST (phase order; page -> endpoint -> module; gates each unit)
+STANDARD GATES (every unit): focused pytest green, related suite green,
+ruff check + format clean, pyright clean (py touched), tsc clean (web
+touched), golden green (extraction touched), live smoke after deploy.
+
+P0-A0 Generic extractor + last-resort routing: bank-agnostic line
+  engine (SA date/amount/balance patterns + running-balance chaining);
+  routing bank>=10%, elif generic>=50%, else whole-statement LLM.
+  Folds P0-I (LLM failure = zero rows + loud warning). Files: worker/
+  parsers/generic.py (new), extractor.py routing. Done when: >=95%
+  recall on mystery 20-row fixture; golden + bank-gate green. Tests:
+  test_extraction_generic.py (fixtures double as evidence).
+P0-A Download wrappers: excel/powerbi/csv/pack/pdf endpoints stream
+  FileResponse bytes (regenerate per request), tenant re-check before
+  stream. Files: apps/api/main.py. Done when: curl each with auth saves
+  a real file; wrong-tenant 403. Tests: test_report_downloads.py.
+P0-B POPIA ZIP builder: tenant-scoped CSVs + originals + manifest +
+  README, excludes hashes/secrets. Files: apps/api/reports.py
+  (build_popia_zip), main.py route. Done when: unzip shows complete
+  readable data; no cross-tenant bytes (isolation test, 2 tenants).
+P0-C Reports screen: /reports page, one button per output + POPIA ZIP,
+  wired to api.ts download helpers (blob save). Files: apps/web/src/app
+  /reports/, lib/api.ts. Done when: click each, file lands, no secrets
+  in payloads. Tests: tsc + manual click-through on staging data.
+P0-D Trial per account: account_number filter on trial-balance +
+  section on /books. Files: apps/api/ledger.py, main.py. Done when:
+  per-account totals sum to tenant totals; invalid account 422.
+P0-E Books screen: /books with template switch + trial table +
+  suspense list (existing endpoints). Files: apps/web/src/app/books/.
+  Done when: switch posts + re-seeds, suspense shows parked money.
+P0-F Debt screen: /debt form (debts + method) + plan table + what-if
+  chart; extra-cash prefilled from ledger avg net. Files: web /debt,
+  api glue in main.py. Done when: snowball/avalanche order correct on
+  the R45k/R20k/R10k fixture; disclaimer shown.
+P0-G Reject/void: POST review-queue/{id}/reject (proposed->rejected;
+  posted->reversal entries + rejected, append-only). UI button in
+  review + transactions. Done when: journals net to zero, chain
+  verifies, audit shows the void. Tests: test_reject_void.py.
+P0-H Settings access: require_login + (admin OR owner-role) for
+  non-secret model/effort fields; keys still admin-only + redacted.
+  Done when: owner saves model, non-owner 403, secret never returned.
+P0-I FOLDED into P0-A0 (zero-row failure ships with the new routing;
+  test_llm_fallback_mock expectation updated there).
+P0-J Queue removal: POST /v1/reports generates synchronously for all
+  kinds (or 422 unknown kind); no "queued" state remains. Done when:
+  grep finds no queued-report path; old queued rows still readable.
+P1-A Verify EMAIL key live (welcome + reset arrive); else document
+  provider setup. No code expected.
+P1-B Trial copy: "pages" -> "uploads" everywhere user-visible.
+P1-C Stranded-row cleanup runbook: re-extract linkless txns or void
+  them via P0-G; verify trial balances after.
+
+VALIDATION PLAN (evidence per phase, not just green dots)
+- Unit: pytest file(s) named above, zero skips; ruff/pyright/tsc clean.
+- Wiring: for each new button, click-through against live Railway and
+  save the downloaded bytes (sha256 recorded in STATE).
+- Isolation: every download/export probed cross-tenant (expect 403) and
+  logged-out (expect 401).
+- Books: after P0-D/E/G, trial balanced + zero on demo data; suspense
+  lists exactly the parked txns; audit chain verify passes.
+- Highest-risk check: P0-B POPIA ZIP completeness vs DB row counts per
+  table (a missing table is a POPIA failure, not a cosmetic bug).
+
+NON-GOALS (explicitly out)
+Vendors UI, audit-trail UI, image features UI, Nedbank/Capitec
+deterministic parsers (LLM covers), scanned-PDF OCR, JWT/auth overhaul,
+per-tenant settings table, report scheduling.
+
+RISKS
+- LLM key validity/latency on big docs (mitigate: per-doc page cap +
+  clear failed-with-reason state from P0-I).
+- Download abuse (mitigate: auth + tenant check + rate limiting;
+  downloads do NOT consume trial - it is their data).
+- Voiding already-reported periods (mitigate: reversals keep history;
+  reports regenerate from live journals - see open Q2).
+
+OPEN QUESTIONS (only what the repo cannot answer)
+Q1 (D2): include original PDFs in the POPIA ZIP? Recommended yes.
+Q2 (D5): may voided txns stay visible as rejected history? Recommended
+  yes (forensic trail beats disappearance).
+Q3 (D7): approve overriding the mock-rows test? Recommended yes.

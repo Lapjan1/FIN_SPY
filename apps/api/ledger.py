@@ -44,6 +44,12 @@ def resolve_account(
     """
     if db is None:
         db = get_db()
+    try:
+        from apps.worker.parsers.registry import ensure_coa_seeded
+
+        ensure_coa_seeded(tenant_id, db=db)
+    except Exception:
+        pass
     if account_id:
         cur = db.execute(
             "SELECT * FROM accounts WHERE id=? AND tenant_id=?", (account_id, tenant_id)
@@ -642,6 +648,68 @@ def repost_transaction(
     }
 
 
+
+
+def void_transaction(
+    tenant_id: str,
+    transaction_id: str,
+    reason: str,
+    created_by: Optional[int] = None,
+    db=None,
+) -> Dict:
+    """Reject a proposed txn, or void a posted one via mirror-image reversals.
+
+    Append-only: originals + reversals all remain (Q2 history). The txn
+    status becomes 'rejected' either way; a status revision row records the
+    human's reason. Raises ValueError('Invalid parameters...') on bad input,
+    PermissionError on cross-tenant access."""
+    from datetime import datetime, timezone
+
+    if db is None:
+        db = get_db()
+    if not tenant_id or not transaction_id:
+        raise ValueError(
+            "Invalid parameters: tenant_id and transaction_id are required"
+        )
+    if not reason or not reason.strip():
+        raise ValueError("Invalid parameters: reason is required for audit trail")
+    cur = db.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,))
+    row = cur.fetchone()
+    txn = dict(row) if row is not None and not isinstance(row, dict) else row
+    if txn is None:
+        raise ValueError(
+            f"Invalid parameters: transaction '{transaction_id}' does not exist"
+        )
+    if txn.get("tenant_id") != tenant_id:
+        raise PermissionError("Cross-tenant access denied - isolation guard")
+    posted = _posted_entries_for(transaction_id, tenant_id, db)
+    reversed_ids = []
+    for entry in posted:
+        rev = _reverse_entry(entry, reason.strip(), created_by, db)
+        reversed_ids.append(rev["id"])
+    old_status = txn.get("status")
+    db.execute("UPDATE transactions SET status='rejected' WHERE id=?", (transaction_id,))
+    db.execute(
+        "INSERT INTO transaction_revisions (id, tenant_id, transaction_id, field,"
+        " old_value, new_value, reason, actor_id, at_utc) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            f"rev-{uuid.uuid4().hex[:8]}",
+            tenant_id,
+            transaction_id,
+            "status",
+            old_status,
+            "rejected",
+            reason.strip(),
+            created_by,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    db.commit()
+    return {
+        "transaction_id": transaction_id,
+        "status": "rejected",
+        "reversed_entry_ids": reversed_ids,
+    }
 def _chain_rows_for(tenant_id: str, txn: Dict, db) -> tuple:
     """Load the verification chain affected by an edit: document rows when the
     txn came from a statement, else the account chain. Ordered chronologically."""
@@ -774,6 +842,7 @@ def trial_balance(
     tenant_id: str,
     as_of: Optional[str] = None,
     entity_id: Optional[str] = None,
+    account_number: Optional[str] = None,
     db=None,
 ) -> Dict:
     """Trial balance per MODULES.md: debits, credits, zero check. Tenant-isolated."""
@@ -781,6 +850,18 @@ def trial_balance(
         db = get_db()
     if not tenant_id:
         raise ValueError("Invalid parameters: tenant_id is required")
+    bank_id = None
+    if account_number:
+        brow = db.execute(
+            "SELECT id FROM accounts WHERE tenant_id=? AND account_number=?",
+            (tenant_id, account_number),
+        ).fetchone()
+        if not brow:
+            raise ValueError(
+                "Invalid parameters: unknown account_number"
+                f" '{account_number}' for tenant"
+            )
+        bank_id = brow["id"] if isinstance(brow, dict) else brow[0]
     q = """
         SELECT a.id as account_id, a.code, a.name, a.type,
                COALESCE(SUM(jl.debit_minor),0) as debits,
@@ -791,6 +872,13 @@ def trial_balance(
         WHERE a.tenant_id = ?
     """
     params: list = [tenant_id]
+    if bank_id:
+        # Only entries touching the bank account; untouched accounts
+        # fall out (their sums would be zero anyway). Balance holds:
+        # every included entry is itself balanced.
+        q += (" AND (jl.entry_id IS NULL OR jl.entry_id IN (SELECT entry_id"
+              " FROM journal_lines WHERE account_id = ?))")
+        params.append(bank_id)
     if as_of:
         q += " AND (je.entry_date IS NULL OR je.entry_date <= ?)"
         params.append(as_of)
@@ -823,6 +911,7 @@ def trial_balance(
         "tenant_id": tenant_id,
         "as_of": as_of,
         "entity_id": entity_id,
+        "account_number": account_number,
         "lines": lines,
         "total_debits": total_debits,
         "total_credits": total_credits,

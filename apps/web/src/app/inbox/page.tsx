@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
-import { DocInfo, Me, fetchDocuments } from '../../lib/api';
+import { DocInfo, Me, fetchDocuments, requeueDocument } from '../../lib/api';
 
 export default function InboxPage() {
   return (
@@ -14,6 +14,7 @@ export default function InboxPage() {
 function InboxInner({ uid, me }: { uid: string; me: Me }) {
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [working, setWorking] = useState('');
   const [error, setError] = useState('');
 
   async function load() {
@@ -32,6 +33,19 @@ function InboxInner({ uid, me }: { uid: string; me: Me }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function retry(id: string) {
+    setWorking(id);
+    setError('');
+    try {
+      await requeueDocument(uid, id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Retry failed');
+    } finally {
+      setWorking('');
+    }
+  }
 
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-6">
@@ -61,10 +75,19 @@ function InboxInner({ uid, me }: { uid: string; me: Me }) {
         ) : null}
         <ul className="divide-y divide-slate-800">
           {docs.map((d) => (
-            <li key={d.id} className="p-3 text-sm flex justify-between gap-2">
+            <li key={d.id} className="p-3 text-sm flex justify-between items-center gap-2">
               <span className="truncate">{d.original_filename}</span>
               <span className="font-mono text-xs text-slate-500">{d.sha256.slice(0, 12)}</span>
               <span className="text-xs">{d.status}</span>
+              {d.status === 'exception' ? (
+                <button
+                  onClick={() => retry(d.id)}
+                  disabled={working === d.id}
+                  className="bg-amber-700 px-3 py-1 rounded text-xs disabled:opacity-50"
+                >
+                  {working === d.id ? 'Queued...' : 'Retry'}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

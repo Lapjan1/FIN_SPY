@@ -3,14 +3,18 @@ import React, { useEffect, useState } from 'react';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
 import {
   AcceptResult,
+  AccountOption,
   EditResult,
   Me,
+  RejectResult,
   ReviewTxn,
   Suggestion,
   acceptTransaction,
   editTransaction,
+  fetchAccounts,
   fetchReviewQueue,
   formatRands,
+  rejectTransaction,
   suggestClassification,
 } from '../../lib/api';
 
@@ -40,6 +44,8 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
   const [queue, setQueue] = useState<ReviewTxn[]>([]);
   const [selected, setSelected] = useState<ReviewTxn | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [activeTemplate, setActiveTemplate] = useState('');
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
@@ -60,8 +66,10 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
     setError('');
     setResult('');
     try {
-      const data = await fetchReviewQueue(uid);
+      const [data, coa] = await Promise.all([fetchReviewQueue(uid), fetchAccounts(uid)]);
       setQueue(data.transactions);
+      setAccounts(coa.accounts);
+      setActiveTemplate(coa.active_template);
       setSelected(null);
       setSuggestion(null);
     } catch (e) {
@@ -100,6 +108,15 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
     }
   }
 
+  function useSuggestion() {
+    if (!suggestion) return;
+    setNature(suggestion.nature);
+    setBusinessPct(String(suggestion.business_pct));
+    setCategoryId(suggestion.category_id);
+    setRationale(suggestion.rationale);
+    setResult('');
+  }
+
   async function accept() {
     if (!selected || !reason.trim()) return;
     setWorking(true);
@@ -117,6 +134,23 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Accept failed');
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function reject() {
+    if (!selected || !reason.trim()) return;
+    if (!window.confirm(`Reject ${selected.description_raw}? Posted journals are voided with reversals; history stays.`)) return;
+    setWorking(true);
+    setError('');
+    try {
+      const out: RejectResult = await rejectTransaction(uid, selected.id, reason.trim());
+      setResult(`Rejected. Reversed journals: ${out.reversed_entry_ids.join(', ') || 'none (was never posted)'}.`);
+      setReason('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Reject failed');
     } finally {
       setWorking(false);
     }
@@ -221,9 +255,17 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
                   <div className="mt-1 space-y-1">
                     <p>
                       <span className="font-medium">{suggestion.nature}</span> {suggestion.business_pct}% to {suggestion.category_id}
+                      {suggestion.account_name ? ` - ${suggestion.account_name}` : ''}
+                      {suggestion.account_type ? ` (${suggestion.account_type})` : ''}
                       <span className="text-slate-400"> ({suggestion.source}, confidence {suggestion.confidence})</span>
                     </p>
+                    {suggestion.mapped_from ? (
+                      <p className="text-slate-500 text-xs">Remapped from {suggestion.mapped_from} to match your {suggestion.active_template || activeTemplate} books.</p>
+                    ) : null}
                     <p className="text-slate-400 text-xs">{suggestion.rationale}</p>
+                    <button onClick={useSuggestion} className="text-xs text-blue-400 hover:text-blue-300 underline">
+                      Use suggestion
+                    </button>
                   </div>
                 )}
               </div>
@@ -242,8 +284,13 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
                   <input value={businessPct} onChange={(e) => setBusinessPct(e.target.value)} inputMode="numeric" placeholder="0-100" className="w-full p-2 bg-slate-900 border border-slate-700 rounded" />
                 </label>
                 <label className="space-y-1 col-span-2">
-                  <span className="text-xs text-slate-400">Category code (blank keeps suggestion)</span>
-                  <input value={categoryId} onChange={(e) => setCategoryId(e.target.value)} placeholder="e.g. 6020, 9999 for unsure" className="w-full p-2 bg-slate-900 border border-slate-700 rounded" />
+                  <span className="text-xs text-slate-400">Category (auto keeps suggestion, {activeTemplate || 'books'} only - no new codes here)</span>
+                  <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full p-2 bg-slate-900 border border-slate-700 rounded">
+                    <option value="">auto (suggestion)</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.code}>{a.code} - {a.name} ({a.type})</option>
+                    ))}
+                  </select>
                 </label>
               </div>
 
@@ -266,6 +313,9 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
                 </button>
                 <button onClick={saveEdit} disabled={working || !reason.trim()} className="bg-blue-600 px-4 py-2 rounded text-sm disabled:opacity-50">
                   Save fixes
+                </button>
+                <button onClick={reject} disabled={working || !reason.trim()} className="bg-red-800 px-4 py-2 rounded text-sm disabled:opacity-50">
+                  Reject / void
                 </button>
               </div>
 

@@ -8,7 +8,7 @@ export default function PrivacyPage() {
       <p className="updated text-sm text-gray-500">Last updated: October 26, 2026</p>
 
       <h2 className="text-xl font-semibold mt-8">1. Information We Collect</h2>
-      <p className="text-gray-700 leading-7">We collect information you provide when you register, upload bank statements (PDF/CSV/OFX) or invoices and receipts (images), create entities (personal/business), and use AI features. This includes your name, email, and hashed password; transaction details (date, description, amount, balance, fingerprint); document hashes and vault references; page coordinates and source spans; classifications with rationale; usage data (pages, tokens, exports, audit actions); and technical data (upload IP, user agent, tenant ID).</p>
+      <p className="text-gray-700 leading-7">We collect information you provide when you register, upload bank statements (PDF/CSV/OFX) or invoices and receipts (images), create entities (personal/business), and use AI features. This includes your name, email, and hashed password; transaction details (date, description, amount, balance, fingerprint); document hashes and vault references; page coordinates and source spans; classifications with rationale; usage data (uploads, tokens, exports, audit actions); and technical data (upload IP, user agent, tenant ID).</p>
       <p className="text-gray-700 leading-7">We do NOT store your raw PDFs as searchable text beyond the extracted word spans. Originals are preserved byte-for-byte in an immutable, content-addressed vault (keyed by SHA256 hash) and are never overwritten.</p>
 
       <h2 className="text-xl font-semibold mt-8">2. How We Use Your Information</h2>

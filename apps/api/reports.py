@@ -162,6 +162,147 @@ def generate_powerbi_pack(tenant_id: str) -> Dict:
         }
     }
 
+def bundle_powerbi_zip(pack: Dict) -> str:
+    """Bundle the powerbi xlsx + csvs into one download zip. Returns path."""
+    import zipfile
+    files = [pack["file_key"]] + list(pack.get("csv_keys", []))
+    zip_path = Path(pack["file_key"]).with_suffix(".zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp in files:
+            p = Path(fp)
+            if p.exists():
+                zf.write(p, p.name)
+    return str(zip_path)
+
+
+_POPIA_README = """FIN_SPY personal data export (POPIA subject access).
+- profile.json: who this export belongs to.
+- *.csv: every row held on your tenant, one file per table.
+- originals/: uploaded statements, byte-identical (see manifest).
+- manifest.json: row counts + sha256 per file + what was excluded.
+Missing originals (if any) are listed in manifest.missing_originals:
+re-upload the file to restore its bytes.
+Generated from the live database; verify counts against the app.
+"""
+
+
+def build_popia_zip(tenant_id: str) -> str:
+    """POPIA subject-access export: every tenant-scoped row + originals.
+
+    Secrets are never included (password hashes, reset tokens, payment
+    authorizations); global tables without a tenant key are excluded.
+    Returns the zip path. Missing vault originals are listed honestly
+    in the manifest instead of failing the export.
+    """
+    import csv
+    import hashlib
+    import json
+    import zipfile
+    from datetime import datetime, timezone
+
+    db = get_db()
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    safe = "".join(c if c.isalnum() or c in "-_" else "_"
+                   for c in tenant_id)[:16] or "export"
+    stage = REPORTS_PATH / f"popia_{safe}_{ts}"
+    (stage / "originals").mkdir(parents=True, exist_ok=True)
+    tables: Dict[str, int] = {}
+
+    def dump_csv(name, sql, params=()):
+        cur = db.execute(sql, params)
+        rows = [dict(r) if not isinstance(r, dict) else r
+                for r in cur.fetchall()]
+        cols = list(rows[0].keys()) if rows else (
+            [d[0] for d in cur.description] if cur.description else [])
+        with (stage / f"{name}.csv").open("w", newline="",
+                                          encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=cols)
+            writer.writeheader()
+            for r in rows:
+                writer.writerow({k: ("" if v is None else str(v))
+                                 for k, v in r.items()})
+        tables[name] = len(rows)
+
+    dump_csv("tenants", "SELECT * FROM tenants WHERE id=?", (tenant_id,))
+    users_sql = ("SELECT id, tenant_id, email, name, role, mfa_enabled,"
+"        subscription_status, stripe_customer_id, stripe_subscription_id,"
+"        paystack_customer_code, paystack_subscription_code, referred_by,"
+"        partner_demo, created_at FROM users WHERE tenant_id=?")
+    dump_csv("users", users_sql, (tenant_id,))
+    for table in ("source_documents", "transactions", "classifications",
+                  "accounts", "journal_entries", "flags",
+                  "audit_log", "merchant_memory", "vendor_rules",
+                  "subscriptions", "usage_events"):
+        dump_csv(table, f"SELECT * FROM {table} WHERE tenant_id=?",
+                 (tenant_id,))
+    dump_csv("journal_lines",
+             "SELECT l.* FROM journal_lines l JOIN journal_entries e"
+             " ON l.entry_id=e.id WHERE e.tenant_id=?", (tenant_id,))
+    dump_csv("document_pages",
+             "SELECT p.* FROM document_pages p JOIN source_documents d"
+             " ON p.document_id=d.id WHERE d.tenant_id=?", (tenant_id,))
+    dump_csv("extraction_runs",
+             "SELECT r.* FROM extraction_runs r JOIN source_documents d"
+             " ON r.document_id=d.id WHERE d.tenant_id=?", (tenant_id,))
+
+    trow = db.execute("SELECT * FROM tenants WHERE id=?",
+                      (tenant_id,)).fetchone()
+    trow = dict(trow) if trow is not None \
+        and not isinstance(trow, dict) else (trow or {})
+    urows = [dict(r) if not isinstance(r, dict) else r for r in db.execute(
+        users_sql, (tenant_id,)).fetchall()]
+    (stage / "profile.json").write_text(json.dumps(
+        {"tenant": trow, "users": urows}, indent=2, default=str),
+        encoding="utf-8")
+
+    originals = []
+    missing_originals = []
+    docs = db.execute(
+        "SELECT sha256, storage_key, original_filename"
+        " FROM source_documents WHERE tenant_id=?",
+        (tenant_id,)).fetchall()
+    for d in docs:
+        d = dict(d) if not isinstance(d, dict) else d
+        src = Path(d["storage_key"]) if d.get("storage_key") \
+            else VAULT_PATH / f"{d['sha256']}.pdf"
+        if not src.exists():
+            src = VAULT_PATH / f"{d['sha256']}.pdf"
+        ext = Path(d.get("original_filename") or "").suffix or ".pdf"
+        dest = stage / "originals" / f"{d['sha256']}{ext}"
+        if src.exists():
+            dest.write_bytes(src.read_bytes())
+            originals.append(dest.name)
+        else:
+            missing_originals.append(d["sha256"])
+
+    files_sha = {}
+    for fp in sorted(stage.rglob("*")):
+        if fp.is_file() and fp.name != "manifest.json":
+            files_sha[str(fp.relative_to(stage))] = \
+                hashlib.sha256(fp.read_bytes()).hexdigest()
+    manifest = {
+        "tenant_id": tenant_id,
+        "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generator": "fin_spy popia v1",
+        "tables": tables,
+        "originals": originals,
+        "missing_originals": missing_originals,
+        "excluded": ["users.password_hash",
+                     "users.paystack_authorization_code", "reset_tokens",
+                     "webhook_events", "settings"],
+        "files_sha256": files_sha,
+    }
+    (stage / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                         encoding="utf-8")
+    (stage / "README.txt").write_text(_POPIA_README, encoding="utf-8")
+    zip_path = REPORTS_PATH / f"popia_{safe}_{ts}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fp in sorted(stage.rglob("*")):
+            if fp.is_file():
+                zf.write(fp, fp.relative_to(stage))
+    return str(zip_path)
+
+
 def generate_auditor_csv(tenant_id: str) -> Dict:
     """
     Generate CSV for auditor to input in their bookkeeping package per user decision:

@@ -86,6 +86,93 @@ _CATEGORY_BY_KEYWORD = (
 )
 
 
+# Raw suggester codes speak sme_cc numbering; personal/mixed books use different
+# codes for the same meaning. Remap keeps every suggestion resolvable in the
+# tenant's active books (suggester wired to the same COA the ledger posts to).
+_TEMPLATE_CODE_MAP = {
+    "personal": {
+        "6200": "6030",  # Fuel -> Transport - Fuel
+        "6100": "6000",  # Rent -> Housing - Bond/Rent
+        "6300": "6000",  # Salary outflow has no personal leg -> general
+        "6600": "6090",  # Bank Charges -> Bank Charges - Personal
+        "6400": "6010",  # Utilities/telecom -> Utilities
+    },
+    "sme_cc": {
+        "6020": "6700",  # Groceries -> Office Supplies (office consumables)
+    },
+    "mixed_sole_prop": {
+        "6100": "6000",  # Rent -> Office - Rent
+        "6400": "6120",  # Utilities/telecom -> Telecom combined (mixed allowed)
+    },
+}
+
+
+def _remap_to_template(raw_code: str, template: str, direction: str) -> tuple:
+    """Map a raw suggested code to a valid code in template.
+
+    Returns (code, mapped_from or None).
+    """
+    code = (raw_code or "").strip()
+    if direction == "credit" and code == "6300":
+        return "4000", code  # salary inflow is income, not an expense leg
+    mapped = _TEMPLATE_CODE_MAP.get(template, {}).get(code)
+    if mapped:
+        return mapped, code
+    return code, None
+
+
+def _template_account(tenant_id: str, code: str, template: str, db):
+    """Template (non-bank) account row for code, or None when missing."""
+    cur = db.execute(
+        "SELECT * FROM accounts WHERE tenant_id=? AND code=? AND template=?"
+        " ORDER BY CASE WHEN account_number IS NULL THEN 0 ELSE 1 END LIMIT 2",
+        (tenant_id, code, template),
+    )
+    for r in cur.fetchall():
+        d = dict(r) if not isinstance(r, dict) else r
+        if not d.get("account_number"):
+            return d
+    return None
+
+
+def _enrich_with_account(sug: Dict, tenant_id: str, direction: str, db) -> Dict:
+    """Seed-on-first-use + remap + attach code/name/type for the UI.
+
+    The suggester only proposes codes that exist in the active books: stale
+    rule codes and cross-template codes are remapped, and anything still
+    unknown parks in 9999 Suspense for human re-decode. Never creates
+    accounts - acceptance still posts only to seeded codes.
+    """
+    from apps.worker.parsers.registry import ensure_coa_seeded
+
+    if db is None:
+        db = get_db()
+    active = ensure_coa_seeded(tenant_id, db=db)
+    raw = (sug.get("category_id") or "").strip()
+    mapped, mapped_from = _remap_to_template(raw, active, direction)
+    if _template_account(tenant_id, mapped, active, db) is None:
+        if _template_account(tenant_id, raw, active, db) is not None:
+            mapped, mapped_from = raw, None
+        else:
+            mapped, mapped_from = "9999", raw
+            sug["rationale"] = (sug.get("rationale") or "") + (
+                f" Category '{raw}' is not in {active} books - parked in 9999"
+                " Suspense for human re-decode."
+            )
+            try:
+                sug["confidence"] = min(float(sug.get("confidence", 0)), 0.5)
+            except (TypeError, ValueError):
+                sug["confidence"] = 0.0
+    acct = _template_account(tenant_id, mapped, active, db)
+    sug["category_id"] = mapped
+    sug["account_name"] = (acct or {}).get("name", "")
+    sug["account_type"] = (acct or {}).get("type", "")
+    sug["active_template"] = active
+    if mapped_from:
+        sug["mapped_from"] = mapped_from
+    return sug
+
+
 def _row_to_dict(row):
     if row is None:
         return None
@@ -206,7 +293,9 @@ def suggest_classification(
 ) -> Dict:
     """Rules-first, AI-second, human-last suggestion. Never finalizes.
 
-    Returns {nature, business_pct, category_id, rationale, source, confidence}.
+    Returns {nature, business_pct, category_id, rationale, source, confidence,
+    account_name, account_type, active_template, mapped_from?}. The category
+    always resolves in the tenant active-template COA (seeded on first use).
     """
     if not tenant_id:
         raise ValueError("Invalid parameters: tenant_id is required")
@@ -215,21 +304,23 @@ def suggest_classification(
             "Invalid parameters: description and account_number are required"
         )
 
+    norm_direction = (direction or "").lower()
+    if norm_direction not in ("credit", "debit"):
+        norm_direction = "credit" if (amount_minor or 0) > 0 else "debit"
+
     ruled = _rule_suggest(description, account_number, tenant_id, direction)
     if ruled:
-        return ruled
+        return _enrich_with_account(ruled, tenant_id, norm_direction, db)
 
     desc = (description or "").lower()
-    direction = (direction or "").lower()
-    if direction not in ("credit", "debit"):
-        direction = "credit" if (amount_minor or 0) > 0 else "debit"
-    return _heuristic_suggest(
+    sug = _heuristic_suggest(
         desc,
-        direction,
-        _category_for(description, direction),
+        norm_direction,
+        _category_for(description, norm_direction),
         (entity_kind or "personal").lower(),
         amount_minor,
     )
+    return _enrich_with_account(sug, tenant_id, norm_direction, db)
 
 
 def _validate_decide_inputs(

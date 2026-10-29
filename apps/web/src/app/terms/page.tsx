@@ -14,7 +14,7 @@ export default function TermsPage() {
       <p className="text-gray-700 leading-7">You must register an account. You are responsible for keeping your login credentials confidential (passwords are stored hashed with bcrypt) and for all activity under your account. Accounts are strictly isolated: no account can access another account's data.</p>
 
       <h2 className="text-xl font-semibold mt-8">3. Subscription & Billing</h2>
-      <p className="text-gray-700 leading-7">After the free trial of 20 pages, continued use requires a paid subscription: Free 20 pages R0, Individual 200 pages R149/mo, SME 1000 pages R599/mo, Practice custom pricing. Payments are processed securely via Paystack. Subscriptions auto-renew monthly. You may cancel at any time - access continues until the end of the billing period, and usage counters reset on renewal.</p>
+      <p className="text-gray-700 leading-7">After the free trial of 20 uploads, continued use requires a paid subscription: Free 20 uploads R0, Individual 200 uploads R149/mo, SME 1000 uploads R599/mo, Practice custom pricing. Payments are processed securely via Paystack. Subscriptions auto-renew monthly. You may cancel at any time - access continues until the end of the billing period, and usage counters reset on renewal.</p>
 
       <h2 className="text-xl font-semibold mt-8">4. Acceptable Use</h2>
       <ul className="list-disc pl-6 text-gray-700 leading-7">

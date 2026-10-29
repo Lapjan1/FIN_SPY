@@ -131,6 +131,11 @@ def test_excel_endpoint_window_422():
         r = client.get("/v1/reports/excel?from_date=2026-01-01&to_date=2026-12-31",
                        headers=h)
         assert r.status_code == 200
-        assert r.json()["sheets"] == 12
+        assert r.headers["content-type"].startswith(
+            "application/vnd.openxmlformats")
+        import io
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(r.content))
+        assert len(wb.sheetnames) == 12
     finally:
         cleanup_tenant(tenant)

@@ -39,13 +39,20 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
     )
     db.commit()
 
+    # Stage tracking: logs carry stage + counts + exception class only,
+    # never page text or amounts, so prod logs stay PII-free.
+    stage = "enter"
     try:
         pdf_path = Path(storage_key)
         if not pdf_path.exists():
             # Try vault path
             pdf_path = VAULT_PATH / f"{sha256}.pdf"
+        if not pdf_path.exists():
+            print(f"worker: doc {doc_id} vault-miss sha {sha256[:8]}...")
 
+        stage = "extract"
         result = extract_document(pdf_path, bank_hint="FNB", password=password, tenant_id=tenant_id)
+        print(f"worker: doc {doc_id} stage=extract rows={len(result.rows)}")
 
         # Reconciliation gate per AGENTS.md + docs/FLOWS.md + apps/worker/reconcile.py
         # Opening + sum = closing, running balance monotonic, duplicate fingerprints
@@ -67,10 +74,16 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
         if has_recon_fail:
             status = "exception"
 
+        stage = "gate"
+        print(f"worker: doc {doc_id} stage=gate pass={gate['overall_pass']}")
+
         # Persist to DB per DB-first
         # For MVP, create source_spans, transactions via persist_to_db
+        stage = "persist"
         persist_to_db(result, doc_id, tenant_id, run_id)
+        print(f"worker: doc {doc_id} stage=persist done")
 
+        stage = "finalize"
         # Update extraction_runs
         db.execute(
             "UPDATE extraction_runs SET status=?, finished_at=?, opening_balance_minor=?, closing_balance_minor=?, computed_closing_minor=?, reconciliation=? WHERE id=?",
@@ -104,18 +117,29 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
             db.execute("UPDATE source_documents SET status=? WHERE id=?", ("needs_password", doc_id))
             db.commit()
             append_audit_log(tenant_id, uploaded_by, "extraction.needs_password", "source_documents", doc_id, {"error": str(e)[:200]})
+            print(f"worker: doc {doc_id} stage={stage} needs_password")
             return "needs_password", None
         else:
             db.execute("UPDATE extraction_runs SET status=?, finished_at=? WHERE id=?", ("fail", datetime.now(timezone.utc).isoformat(), run_id))
             db.execute("UPDATE source_documents SET status=? WHERE id=?", ("exception", doc_id))
             db.commit()
             append_audit_log(tenant_id, uploaded_by, "extraction.fail", "extraction_runs", run_id, {"error": str(e)[:500]})
+            print(f"worker: doc {doc_id} FAILED stage={stage} exc=ValueError")
             return "exception", None
     except Exception as e:
         db.execute("UPDATE extraction_runs SET status=?, finished_at=? WHERE id=?", ("fail", datetime.now(timezone.utc).isoformat(), run_id))
         db.execute("UPDATE source_documents SET status=? WHERE id=?", ("exception", doc_id))
         db.commit()
         append_audit_log(tenant_id, uploaded_by, "extraction.fail", "extraction_runs", run_id, {"error": str(e)[:500]})
+        # Schema-shape errors carry identifiers only (never row values),
+        # so their text is safe for logs; everything else stays class-only.
+        _safe_msg = (
+            f" msg={str(e)[:120]}"
+            if type(e).__name__
+            in ("InvalidColumnReference", "UndefinedColumn", "UndefinedTable")
+            else ""
+        )
+        print(f"worker: doc {doc_id} FAILED stage={stage} exc={type(e).__name__}{_safe_msg}")
         return "exception", None
 
 def worker_loop(poll_interval: int = 5, max_iterations: int = None):

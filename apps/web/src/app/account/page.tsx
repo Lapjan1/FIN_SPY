@@ -181,7 +181,7 @@ export default function AccountPage() {
       <div>
         <h1 className="text-2xl font-bold">Account</h1>
         <p className="text-sm text-slate-400 mt-1">
-          One login for every page. Free trial covers 20 pages, then pick a plan.
+          One login for every screen. Free trial covers 20 uploads, then pick a plan.
         </p>
       </div>
 
@@ -242,10 +242,10 @@ export default function AccountPage() {
             <p>
               <span className="text-slate-400">Plan status</span>{' '}
               {me.is_trial_unlimited ? (
-                <span className="px-2 py-0.5 rounded text-xs bg-green-900 text-green-200">Pro: unlimited pages</span>
+                <span className="px-2 py-0.5 rounded text-xs bg-green-900 text-green-200">Pro: unlimited uploads</span>
               ) : (
                 <span className="px-2 py-0.5 rounded text-xs bg-amber-900 text-amber-200">
-                  Trial: {me.trial_pages_remaining ?? 0} of 20 pages left
+                  Trial: {me.trial_pages_remaining ?? 0} of 20 uploads left
                 </span>
               )}
             </p>
@@ -263,7 +263,7 @@ export default function AccountPage() {
                 {Object.entries(plans).map(([code, p]) => (
                   <div key={code} className="border border-slate-700 rounded p-3 space-y-1">
                     <p className="font-semibold">{p.name}</p>
-                    <p className="text-slate-300">{p.pages} pages</p>
+                    <p className="text-slate-300">{p.pages} uploads</p>
                     <p className="text-slate-400">{p.price_display}</p>
                     {code !== 'free' && !me.is_trial_unlimited ? (
                       <button onClick={() => subscribe(code)} disabled={working} className="mt-2 bg-blue-600 px-3 py-1 rounded disabled:opacity-50">
@@ -289,7 +289,7 @@ export default function AccountPage() {
         <ul className="list-disc pl-5 mt-1 space-y-1">
           <li>Passwords are hashed with bcrypt. Reset links expire after 1 hour.</li>
           <li>Each account gets its own private workspace; uploads never leak across accounts.</li>
-          <li>Trial counts uploaded pages: 20 free, then subscribe or stop uploading.</li>
+          <li>Trial counts statement uploads: 20 free, then subscribe or stop uploading.</li>
         </ul>
       </div>
     </main>

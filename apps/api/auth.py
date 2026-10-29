@@ -94,6 +94,34 @@ def require_admin(request: Request) -> int:
         return uid
     raise HTTPException(403, detail="Admin required")
 
+
+
+def require_owner_or_admin(request: Request) -> int:
+    """Login + tenant-owner-or-admin gate for non-secret preferences.
+
+    Default user role is 'owner'; narrower roles (e.g. 'member') are denied.
+    Keys/billing stay admin-only at the endpoint level."""
+    uid = require_login(request)
+    user = get_user(uid)
+    if not user:
+        raise HTTPException(401, "User not found")
+    role = user.get("role", "")
+    email = user.get("email", "")
+    admin_email = env_or_setting("admin_email", "")
+    if role in ("admin", "owner") or (admin_email and email.lower() == admin_email.lower()):
+        return uid
+    raise HTTPException(403, detail="Owner or admin required")
+
+
+def is_admin_user(user_id: int) -> bool:
+    """True when the user is a global admin (role or ADMIN_EMAIL allowlist)."""
+    user = get_user(user_id)
+    if not user:
+        return False
+    admin_email = env_or_setting("admin_email", "")
+    return user.get("role", "") == "admin" or bool(
+        admin_email and user.get("email", "").lower() == admin_email.lower()
+    )
 def get_user(user_id: int) -> Optional[dict]:
     db = get_db()
     cur = db.execute("SELECT * FROM users WHERE id=?", (user_id,))

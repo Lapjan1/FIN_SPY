@@ -141,11 +141,12 @@ def test_signed_pdf_endpoint(monkeypatch, tmp_path):
         r = client.get("/v1/reports/signed-pdf?from_date=2026-01-01&to_date=2026-12-31",
                        headers=h)
         assert r.status_code == 200
-        body = r.json()
-        assert Path(body["file_key"]).read_bytes()[:5] == b"%PDF-"
-        assert body["timestamped"] is False
-        assert "timestamp omitted" in (body["warning"] or "")
-        v = signing.verify_pdf_file(Path(body["file_key"]))
+        assert r.headers["content-type"].startswith("application/pdf")
+        pdf_path = tmp_path / "signed.pdf"
+        pdf_path.write_bytes(r.content)
+        assert r.content[:5] == b"%PDF-"
+        assert "timestamp omitted" in r.headers.get("x-report-warning", "")
+        v = signing.verify_pdf_file(pdf_path)
         assert v["valid"] is True
     finally:
         cleanup_tenant(tenant)

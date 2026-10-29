@@ -115,34 +115,50 @@ def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[E
     all_text = " ".join([line['text'] for page in pages for line in page['lines']])
     detected_bank = detect_bank_from_text(all_text) or bank_hint
 
-    # Try parsers in order based on detected bank or hint
-    parsers_order = []
-    if detected_bank == "FNB":
-        parsers_order = [parse_fnb_lines, parse_stdb_lines, parse_absa_lines]
-    elif detected_bank == "STDB":
-        parsers_order = [parse_stdb_lines, parse_fnb_lines, parse_absa_lines]
-    elif detected_bank == "ABSA":
-        parsers_order = [parse_absa_lines, parse_fnb_lines, parse_stdb_lines]
-    else:
-        # Default order per 25+ adaptors reference
-        parsers_order = [parse_fnb_lines, parse_stdb_lines, parse_absa_lines]
-
+    # Bank-gated: only the detected bank's parser may claim the document.
+    # Cross-bank parsers over-match (Absa's loose DD/MM/YYYY + number
+    # patterns once claimed 96 garbage rows on an FNB file), so anything
+    # below the threshold falls through to the LLM fallback instead of a
+    # wrong parser. Diagnostics are counts only - never page text - so
+    # prod logs stay PII-free.
+    bank_parsers = {
+        "FNB": parse_fnb_lines,
+        "STDB": parse_stdb_lines,
+        "ABSA": parse_absa_lines,
+    }
     total_lines = sum(len(p['lines']) for p in pages)
-
-    for parser in parsers_order:
-        try:
-            result = parser(pages)
-            # Confidence check: rows >= 10% of total lines and at least 1 row
-            if len(result.rows) > 0 and len(result.rows) >= total_lines * 0.1:
-                # Check bank config deviations if available
-                bank_cfg = get_bank_config(detected_bank or bank_hint)
-                if bank_cfg:
-                    # Add bank info to statement
-                    result.statement['bank'] = detected_bank or bank_hint
-                return result
-        except Exception as e:
-            continue
-
+    parser = bank_parsers.get(detected_bank or "")
+    if parser is None:
+        print(
+            f"deterministic: bank={detected_bank} lines={total_lines} "
+            "no dedicated parser -> LLM fallback"
+        )
+        return None
+    try:
+        result = parser(pages)
+        found = len(result.rows)
+    except Exception:
+        print(
+            f"deterministic: bank={detected_bank} lines={total_lines} "
+            f"{parser.__name__}=ERR -> LLM fallback"
+        )
+        return None
+    # Confidence check: rows >= 10% of total lines and at least 1 row
+    if found > 0 and found >= total_lines * 0.1:
+        # Check bank config deviations if available
+        bank_cfg = get_bank_config(detected_bank or bank_hint)
+        if bank_cfg:
+            # Add bank info to statement
+            result.statement['bank'] = detected_bank or bank_hint
+        print(
+            f"deterministic: bank={detected_bank} lines={total_lines} "
+            f"{parser.__name__}={found} -> {parser.__name__}"
+        )
+        return result
+    print(
+        f"deterministic: bank={detected_bank} lines={total_lines} "
+        f"{parser.__name__}={found} below 10% -> LLM fallback"
+    )
     return None
 
 def _extraction_client(model_id: Optional[str]) -> MetaClient:
@@ -262,39 +278,32 @@ def llm_fallback(pages: List[Dict], model_id: Optional[str] = None, tenant_id: s
         )
 
     except Exception as e:
-        # Fallback to mock for tests/fakes or when API fails (e.g., no key, rate limit 100 RPM)
-        # For hackathon, mock ensures tests pass even without credits
-        rows = []
-        for page in pages[:1]:
-            for line in page['lines'][:2]:
-                rows.append(ExtractedRow(
-                    line_ids=[line['line_id']],
-                    date="2026-10-26",
-                    description="LLM Fallback Mock - real call failed, using mock for tests",
-                    amount_minor=10000,
-                    direction="debit",
-                    balance_after_minor=None,
-                    source_quote=line['text'][:100]
-                ))
-
+        # P0-A0/Q3: never fabricate rows on LLM failure. Zero rows
+        # plus a loud warning - the doc visibly needs re-extract or
+        # manual capture. Class-only in print (no prompt echoes).
+        print(f"llm_fallback failed: {type(e).__name__} - zero rows")
         return ExtractionResult(
             statement={"bank": None, "account_mask": None, "period_start": None, "period_end": None, "currency": "ZAR", "opening_balance": None, "closing_balance": None},
-            rows=rows,
-            unaccounted_lines=[{"line_id": l['line_id'], "reason": "noise"} for p in pages for l in p['lines'][2:][:2]],
-            warnings=[f"LLM fallback mock due to API error or no key: {e} - implement real Meta call with $123.88 credits team_id 1097489856409281"],
+            rows=[],
+            unaccounted_lines=[{"line_id": l['line_id'], "reason": "llm_failed"} for p in pages for l in p['lines']],
+            warnings=[f"LLM fallback failed ({type(e).__name__}): zero rows persisted - re-extract or capture manually"],
             opening_balance_minor=None,
             closing_balance_minor=None
         )
 
 def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[str] = None, tenant_id: str = "default") -> ExtractionResult:
     """
-    Main entry: intake -> text+bbox -> deterministic -> LLM fallback -> validate -> persist
+    Main entry: intake -> text+bbox -> deterministic -> generic -> LLM fallback -> validate -> persist
     DB-first: result should be persisted to source_spans/transactions before returning
     Handles encrypted PDFs: password param transient, never logged/stored, if no password and encrypted raises needs_password
     """
     pages = extract_text_with_bbox(pdf_path, password=password)
-    # Deterministic first
+    # Bank parser first (precision), generic engine second (recall),
+    # whole-statement LLM strictly last resort (P0-A0/D9).
     result = deterministic_parse(pages, bank_hint)
+    if result is None:
+        from .generic import parse_generic_lines
+        result = parse_generic_lines(pages)
     if result is None:
         # LLM fallback
         result = llm_fallback(pages, tenant_id=tenant_id)

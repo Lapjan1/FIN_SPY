@@ -229,3 +229,63 @@ Symptom: pyright reportGeneralTypeIssues on `raise last` after a retry loop (Non
 Cause: flow analysis cannot prove the loop body assigned the variable - pragma comments do not narrow types.
 Fix: `assert last is not None` before raise; 0 errors on new modules.
 Applies when: Any raise-after-loop - assert the invariant instead of commenting it.
+
+## 2026-10-29-40 Checklists measured construction, not presentation
+Symptom: All Day1-8 gates green while the landing page showed fake KPIs, a hero-flow checklist, and an architecture block to every visitor.
+Cause: Every checkbox was backend-verifiable (endpoints exist, pytest green) - no gate ever said "zero mock data on landing" or "view as a stranger".
+Fix: Rewrote landing with real copy + live API badge; add a UI-as-stranger review to Day9 polish before video/submit.
+Applies when: Any "done" claim on user-visible UI - construction gates never prove presentation.
+
+## 2026-10-29-41 NEXT_PUBLIC vars bake at build time
+Symptom: Web service env var set on Railway but the live bundle still called localhost.
+Cause: Next.js inlines NEXT_PUBLIC_* at build; setting the var without a rebuild changes nothing, and the Dockerfile never declared it.
+Fix: Explicit ARG/ENV NEXT_PUBLIC_API_URL before `pnpm build` in apps/web/Dockerfile; process is set-var-then-redeploy; verified baked URL in the live JS bundle.
+Applies when: Any Next.js-on-Railway wiring - declare the ARG, set, then rebuild.
+
+## 2026-10-29-42 Stale hardcoded CORS origin from research project
+Symptom: Deployed web could never call the API from a browser (preflight would fail each origin).
+Cause: allow_origins hardcoded Clearmind's old Railway URL (web-production-ad9d4) copied during research, never replaced with FIN_SPY's.
+Fix: `_cors_origins()` helper - localhost dev defaults + WEB_ORIGIN env (comma-separated); stale URL deleted; live OPTIONS preflight returns 200 + correct allow-origin.
+Applies when: Adapting any config from a reference project - grep for the old project's URLs before calling it done.
+
+## 2026-10-29-43 edit_file cannot match CRLF files
+Symptom: muse.edit_file "no exact match found" on correct text in apps/api/main.py, Dockerfile, compose (0.95+ fuzzy scores).
+Cause: Tool matches LF finds against CRLF bytes (verified 0D 0A via Format-Hex); .env.example (LF) worked in the same batch.
+Fix: PowerShell fallback - [IO.File] read (preserves CRLF), Replace-Once with match-count==1 assertion, WriteAllText UTF-8 no BOM, git diff to verify; probe endings first when an edit fails.
+Applies when: Any edit_file miss on a Windows checkout - check endings before rewording the find.
+
+## 2026-10-29-44 Sandbox blocks node, uv store, and TestClient sockets
+Symptom: tsc EPERM on typescript lib, `uv tool run` lock denied, TestClient tests fail on socket.socketpair - all green outside the sandbox.
+Cause: Managed shell sandbox denies those paths/calls; files themselves are healthy (read_file opens them fine).
+Fix: Run verification gates (tsc, build, pytest with TestClient, ruff via uv) unsandboxed with require_escalated; never "fix" code to satisfy a sandbox-only failure.
+Applies when: Any gate fails with EPERM/lock/socketpair - confirm outside the sandbox before touching code.
+
+## 2026-10-29-45 Local railway-up deploy playbook while GitHub frozen
+Symptom: No auto-deploy (Lapjan1 frozen), dashboard Redeploy only rebuilds old commits, stray 914a9 domain unidentified.
+Cause: Services still point at the frozen repo; only the local checkout has new code.
+Fix: `railway service list` to inventory (proved 914a9 outside the project), `railway variables --set` for wiring vars, `railway up --service X --detach` (uploads working tree incl. uncommitted), poll `service list` for the new deployment ID, verify live (preflight/bundle/HTML). Vars print as a table, not KEY= lines - filter rows, never dump values.
+Applies when: Any deploy while the git integration is dead - CLI up from the local repo is the release path.
+
+## 2026-10-29-46 Backend trusts caller-supplied tenant_id
+Symptom: Two users registering with the default tenant would share one workspace (isolation is by tenant, not user).
+Cause: create_user takes tenant_id from the request (default "default-tenant") and creates the tenant row if missing - correct API, but the old UI hardcoded one tenant.
+Fix: Frontend sends deterministic tenantIdForEmail (stable across browsers, unique per unique email); zero backend change; login returns the stored tenant.
+Applies when: Any multi-tenant register flow - the client must mint a unique stable tenant or the backend must (pick one, never default-share).
+
+## 2026-10-29-47 Paystack callback must carry user_id + public host
+Symptom: Paystack browser redirect to /v1/billing/callback would 401 (no X-User-Id on a redirect) and APP_BASE_URL defaulted to localhost.
+Cause: callback_url built without auth context; require_login accepts query user_id but nothing sent it.
+Fix: callback_url = {APP_BASE_URL}/v1/billing/callback?user_id={user_id} (Paystack appends trxref with &); APP_BASE_URL set to the public API domain; webhook still activates independently.
+Applies when: Any payment redirect flow - the return URL must authenticate the browser, not just the API.
+
+## 2026-10-29-48 PowerShell 5.1 has no -SkipHttpErrorCheck
+Symptom: Invoke-WebRequest OPTIONS preflight probe failed with ParameterBindingException, then NullReference in catch.
+Cause: -SkipHttpErrorCheck is PS7+; PS5.1 throws on non-2xx and mishandles the manual check.
+Fix: curl.exe for header-level probes (OPTIONS + Origin, status + allow-origin lines); keep Invoke-RestMethod for simple JSON GETs.
+Applies when: Any HTTP-header verification on Windows PS5.1 - reach for curl first.
+
+## 2026-10-29-49 Thrown Error drops the HTTP status pages need
+Symptom: Upload page could not distinguish 402 trial-exhausted from generic failures - every error rendered the same red box.
+Cause: api() helper threw `new Error(detail)` with no status attached.
+Fix: Attach res.status to the thrown error (backwards compatible) + isPaywallError/isAuthError helpers; upload branches 402 to a PaywallNotice with plans.
+Applies when: Any typed API client - carry status on errors so UI can branch (paywall, re-login) instead of string-matching messages.

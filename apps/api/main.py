@@ -39,9 +39,20 @@ app = FastAPI(
     description="Financial Surveillance & Peak Insights - DB-first forensic books + spy + KPIs + debt strategies. Built with Meta Muse."
 )
 
+def _cors_origins() -> list:
+    """Browser origins allowed to call the API: localhost dev defaults plus
+    WEB_ORIGIN env (comma-separated, one per deployed web service)."""
+    origins = ["http://127.0.0.1:3000", "http://localhost:3000"]
+    for origin in os.getenv("WEB_ORIGIN", "").split(","):
+        origin = origin.strip().rstrip("/")
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000", "https://web-production-ad9d4.up.railway.app"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -840,7 +851,8 @@ def billing_checkout(plan_code: str = "individual", user_id: int = Depends(requi
     tenant_id = row["tenant_id"] if isinstance(row, dict) else row[1]
     # Build absolute callback URL (proxy-aware)
     base_url = os.getenv("APP_BASE_URL", "http://127.0.0.1:8000")
-    callback_url = f"{base_url}/v1/billing/callback"
+    # user_id query lets require_login accept the browser redirect (dev auth; prod needs JWT per AUTH_PAYSTACK)
+    callback_url = f"{base_url}/v1/billing/callback?user_id={user_id}"
     try:
         data = initialize_transaction(email, plan_code, callback_url, user_id, tenant_id)
         if data.get("free"):

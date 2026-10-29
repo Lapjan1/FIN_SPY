@@ -1,4 +1,5 @@
 import React from 'react';
+import SessionNav from '../components/SessionNav';
 
 export const metadata = {
   title: 'FIN_SPY - Financial Surveillance & Peak Insights',
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <a href="/privacy">Privacy</a>
             <a href="/terms">Terms</a>
             <a href="/refund">Refund</a>
+            <SessionNav />
             <a href="/account" className="bg-blue-600 px-3 py-1 rounded">Account</a>
           </div>
         </nav>

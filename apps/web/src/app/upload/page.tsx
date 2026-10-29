@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { uploadDocument } from '../../lib/api';
+import { isPaywallError, uploadDocument } from '../../lib/api';
+import PaywallNotice from '../../components/PaywallNotice';
 
 export default function UploadPage() {
   const [userId, setUserId] = useState('');
@@ -8,6 +9,7 @@ export default function UploadPage() {
   const [password, setPassword] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  const [paywallDetail, setPaywallDetail] = useState('');
   const [result, setResult] = useState('');
 
   useEffect(() => {
@@ -26,13 +28,18 @@ export default function UploadPage() {
     }
     setWorking(true);
     setError('');
+    setPaywallDetail('');
     setResult('');
     try {
       window.localStorage.setItem('finspy-user-id', userId);
       const out = await uploadDocument(userId, file, password || undefined);
       setResult(JSON.stringify(out, null, 2));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed');
+      if (isPaywallError(e)) {
+        setPaywallDetail(e instanceof Error ? e.message : '');
+      } else {
+        setError(e instanceof Error ? e.message : 'Upload failed');
+      }
     } finally {
       setWorking(false);
     }
@@ -73,6 +80,7 @@ export default function UploadPage() {
       </div>
 
       {error ? <div className="border border-red-800 bg-red-950 p-3 rounded text-sm">{error}</div> : null}
+      {paywallDetail ? <PaywallNotice detail={paywallDetail} /> : null}
       {result ? (
         <div>
           <h2 className="font-semibold text-sm mb-2">Vault receipt</h2>

@@ -28,7 +28,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
   web:
-    build: ../apps/web
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8000}
     ports:
       - "127.0.0.1:3000:3000"
     env_file: ../.env

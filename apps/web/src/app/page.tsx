@@ -1,51 +1,130 @@
 'use client';
-import React from 'react';
-import { KpiCards } from '../components/KpiCards';
-import SourceViewer from '../components/SourceViewer';
+import React, { useEffect, useState } from 'react';
+import { API_BASE } from '../lib/api';
+
+type ApiState = 'checking' | 'online' | 'unreachable';
+
+function ApiStatus() {
+  const [state, setState] = useState<ApiState>('checking');
+  useEffect(() => {
+    let live = true;
+    fetch(`${API_BASE}/health/ready`)
+      .then((r) => (live ? setState(r.ok ? 'online' : 'unreachable') : undefined))
+      .catch(() => (live ? setState('unreachable') : undefined));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const style =
+    state === 'online'
+      ? 'bg-green-900 text-green-200'
+      : state === 'unreachable'
+        ? 'bg-amber-900 text-amber-200'
+        : 'bg-slate-800 text-slate-300';
+  const label =
+    state === 'online' ? 'API online' : state === 'unreachable' ? 'API unreachable' : 'Checking API';
+  return <span className={`px-2 py-0.5 rounded text-xs ${style}`}>{label}</span>;
+}
 
 export default function HomePage() {
   return (
-    <main className="max-w-6xl mx-auto p-6 space-y-8">
-      <div className="text-center py-12">
-        <h1 className="text-4xl font-bold">Your money has a stalker. Find it.</h1>
-        <p className="mt-4 text-slate-400">Upload any SA bank PDF - every number traces to exact bbox, SHA256 vault + hash-chain audit, dynamic books, spy for leaks, KPI peek + debt kill plan.</p>
-        <div className="mt-6 flex justify-center gap-4">
-          <a href="/account" className="bg-blue-600 px-6 py-2 rounded">Upload PDF</a>
-          <a href="/review" className="border border-slate-700 px-6 py-2 rounded">Review queue</a>
-          <a href="/privacy" className="border border-slate-700 px-6 py-2 rounded">See Privacy POPIA</a>
+    <main className="max-w-6xl mx-auto p-6 space-y-10">
+      <div className="py-10 flex flex-col md:flex-row md:items-end gap-6">
+        <div className="flex-1">
+          <h1 className="text-4xl font-bold">Every rand, traced to the page.</h1>
+          <p className="mt-4 text-slate-300 max-w-2xl">
+            Upload any South African bank statement. FIN_SPY extracts every transaction,
+            pins each one to the exact line on your original PDF, builds your books,
+            hunts leaks and duplicate fees, and exports court-ready reports.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <a href="/upload" className="bg-blue-600 px-6 py-2 rounded">Upload a statement</a>
+            <a href="/review" className="border border-slate-700 px-6 py-2 rounded">Review queue</a>
+            <a href="/dashboard" className="border border-slate-700 px-6 py-2 rounded">Dashboard</a>
+          </div>
         </div>
-        <p className="mt-3 text-xs text-slate-500">Built with Meta Muse Spark/Wonder/Image/SAM 3.1 - Startup track - commits during Oct26-Nov4</p>
-      </div>
-
-      <KpiCards kpis={[
-        {label:"Leak Score R/mo",value:"R187",delta:"+R12 vs last month",accent:"leak"},
-        {label:"Runway months",value:"4.5",delta:"burn R25k/mo"},
-        {label:"Savings Rate",value:"12.5%",delta:"private vs business 35%"},
-        {label:"Trial Pages Remaining",value:"20",delta:"Free plan"},
-      ]} />
-
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="border border-slate-800 rounded p-4">
-          <h3 className="font-semibold mb-2">Hero Demo Flow (2-3 min)</h3>
-          <ol className="list-decimal pl-5 text-sm text-slate-400 space-y-1">
-            <li>Problem: pile PDFs no proof</li>
-            <li>Upload 3 statements - hash + timestamp appear vault immutable</li>
-            <li>Extraction line-ID grounding + reconciliation gate opening+sum=closing</li>
-            <li>Private vs business AI rationale mixed split merchant memory</li>
-            <li>Dashboard click bar - grid - PDF page highlighted bbox (pdf.js)</li>
-            <li>Forensic flags duplicate F-010 Benford F-020 + Leak Score</li>
-            <li>KPI peek runway burn savings + debt snowball vs avalanche</li>
-            <li>Generate Excel live SUMIFS + signed PAdES PDF + Evidence Pack ZIP verify_pack.py</li>
-            <li>Billing test-mode Paystack + Built with Meta</li>
-          </ol>
+        <div className="flex flex-col items-start gap-2">
+          <ApiStatus />
+          <p className="text-xs text-slate-500">Free trial: 20 pages, no card required.</p>
         </div>
-        <SourceViewer docId={null} docSha256="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" pageNo={3} pageWidth={595} pageHeight={842} lineIds={["L012","L013"]} bboxes={[{line_id:"L012",x0:10,y0:20,x1:90,y1:25}]} />
       </div>
 
-      <div className="border border-slate-800 rounded p-4">
-        <h3 className="font-semibold">Architecture - DB-first per AGENTS.md</h3>
-        <pre className="text-xs text-slate-400 mt-2 whitespace-pre-wrap">Browser Next.js → FastAPI /v1 → Vault content-hash SHA256 → Queue SQLite→Postgres → Worker intake→hash→text+bbox→extract→reconcile → LLM Meta Adapter freellmapi:3001 dev llama.com 1.3 prod → SQLite fin_spy.db Supabase RLS audit_log hash-chain → Spy Engine subscription/duplicate/fee/anomaly → KPI Engine → Dashboard API + Chat tool-calling → Reports Excel+Signed PDF+Evidence Pack</pre>
-      </div>
+      <section>
+        <h2 className="text-xl font-semibold mb-4">What you get</h2>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="border border-slate-800 rounded p-4">
+            <h3 className="font-semibold">1. Proof, not just numbers</h3>
+            <p className="text-sm text-slate-300 mt-1">
+              Click any transaction to see the exact highlighted line on your original
+              statement. SHA256 vault plus hash-chained audit log, ready for your
+              accountant or a dispute.
+            </p>
+          </div>
+          <div className="border border-slate-800 rounded p-4">
+            <h3 className="font-semibold">2. Books that build themselves</h3>
+            <p className="text-sm text-slate-300 mt-1">
+              Private vs business classification with merchant memory, double-entry
+              journals, and trial balances per bank account. You confirm or correct
+              with a reason; every change is revisioned.
+            </p>
+          </div>
+          <div className="border border-slate-800 rounded p-4">
+            <h3 className="font-semibold">3. A spy for your leaks</h3>
+            <p className="text-sm text-slate-300 mt-1">
+              Recurring subscriptions, duplicates, bank fees, and anomalies flagged
+              automatically, with a monthly leak score and KPIs: runway, burn,
+              savings rate.
+            </p>
+          </div>
+          <div className="border border-slate-800 rounded p-4">
+            <h3 className="font-semibold">4. A plan to kill debt</h3>
+            <p className="text-sm text-slate-300 mt-1">
+              Snowball vs avalanche payoff plans computed on your real cashflow,
+              plus Excel, signed PDF, and evidence-pack exports your auditor can
+              verify independently.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-4">How it works</h2>
+        <ol className="grid md:grid-cols-3 gap-4 text-sm">
+          <li className="border border-slate-800 rounded p-4">
+            <span className="font-bold text-blue-400">Step 1 — Upload.</span>{' '}
+            <span className="text-slate-300">
+              Drop in a PDF. It is hashed into an immutable vault and queued for
+              extraction with a reconciliation gate.
+            </span>
+          </li>
+          <li className="border border-slate-800 rounded p-4">
+            <span className="font-bold text-blue-400">Step 2 — Check and decide.</span>{' '}
+            <span className="text-slate-300">
+              Confirm extractions in the review queue and accept private/business
+              suggestions. Nothing posts without your say-so.
+            </span>
+          </li>
+          <li className="border border-slate-800 rounded p-4">
+            <span className="font-bold text-blue-400">Step 3 — Peek and export.</span>{' '}
+            <span className="text-slate-300">
+              Drill any dashboard number back to source, ask Spy Chat, then export
+              Excel, signed PDF, or a verifiable evidence pack.
+            </span>
+          </li>
+        </ol>
+      </section>
+
+      <section className="border border-slate-800 rounded p-4 flex flex-col md:flex-row md:items-center gap-3 justify-between">
+        <p className="text-sm text-slate-300">
+          Built with Meta Muse Spark, Wonder, Image, and SAM 3.1. Your documents are
+          processed under POPIA-aware handling; hosted AI only ever sees what you approve.
+        </p>
+        <div className="flex gap-3 text-sm shrink-0">
+          <a href="/privacy" className="text-blue-400 underline">Privacy</a>
+          <a href="/terms" className="text-blue-400 underline">Terms</a>
+          <a href="/refund" className="text-blue-400 underline">Refunds</a>
+        </div>
+      </section>
     </main>
   );
 }

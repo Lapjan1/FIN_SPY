@@ -146,7 +146,9 @@ async function api<T>(path: string, userId: string, init?: RequestInit): Promise
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = (data as { detail?: string }).detail || `request failed ${res.status}`;
-    throw new Error(detail);
+    const err = new Error(detail) as Error & { status: number };
+    err.status = res.status;
+    throw err;
   }
   return data as T;
 }
@@ -244,7 +246,9 @@ export async function uploadDocument(
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((data as { detail?: string }).detail || `upload failed ${res.status}`);
+    const err = new Error((data as { detail?: string }).detail || `upload failed ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
   }
   return data as Record<string, unknown>;
 }
@@ -280,4 +284,122 @@ export function postChat(userId: string, tenantId: string, messages: Array<{ rol
 export function formatRands(minor: number | undefined | null): string {
   if (minor === undefined || minor === null) return '—';
   return `R${(minor / 100).toFixed(2)}`;
+}
+
+// --- Session: one login shared by every page ---
+const SESSION_KEY = 'finspy-user-id';
+
+export function getSessionUserId(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(SESSION_KEY) || '';
+}
+
+export function setSessionUserId(id: string): void {
+  if (typeof window === 'undefined') return;
+  if (id) window.localStorage.setItem(SESSION_KEY, id);
+  else window.localStorage.removeItem(SESSION_KEY);
+}
+
+export function clearSession(): void {
+  setSessionUserId('');
+}
+
+// HTTP status rides on thrown errors so pages can branch (402 -> paywall, 401 -> sign in).
+export function errorStatus(e: unknown): number | null {
+  const s = (e as { status?: unknown } | null)?.status;
+  return typeof s === 'number' ? s : null;
+}
+
+export function isPaywallError(e: unknown): boolean {
+  return errorStatus(e) === 402;
+}
+
+export function isAuthError(e: unknown): boolean {
+  return errorStatus(e) === 401;
+}
+
+// --- Auth + billing (public calls carry no X-User-Id) ---
+
+async function publicApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = (data as { detail?: string }).detail || `request failed ${res.status}`;
+    const err = new Error(detail) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
+  return data as T;
+}
+
+export type AuthResult = {
+  id: number;
+  email: string;
+  tenant_id: string;
+  message?: string;
+};
+
+// One tenant per user, derived deterministically from the unique email so it
+// is stable across browsers with no extra round-trip. Backend creates it on register.
+export function tenantIdForEmail(email: string): string {
+  const slug = email
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `t-${slug || 'user'}`;
+}
+
+export function register(email: string, password: string, name?: string): Promise<AuthResult> {
+  return publicApi<AuthResult>('/v1/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password, name: name || '', tenant_id: tenantIdForEmail(email) }),
+  });
+}
+
+export function login(email: string, password: string): Promise<AuthResult> {
+  return publicApi<AuthResult>('/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export type ForgotResult = { sent: boolean; reset_token?: string; note?: string };
+
+export function forgotPassword(email: string): Promise<ForgotResult> {
+  return publicApi<ForgotResult>('/v1/auth/forgot', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function resetPassword(token: string, password: string): Promise<{ ok: boolean }> {
+  return publicApi<{ ok: boolean }>('/v1/auth/reset', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  });
+}
+
+export type BillingPlans = Record<string, { name: string; pages: number; amount_minor: number; price_display: string }>;
+
+export function fetchBillingPlans(): Promise<BillingPlans> {
+  return publicApi<BillingPlans>('/v1/billing/plans');
+}
+
+export type CheckoutResult = {
+  checkout_url: string | null;
+  access_code?: string;
+  reference?: string;
+  plan_code: string;
+  free?: boolean;
+};
+
+export function startCheckout(userId: string, planCode: string): Promise<CheckoutResult> {
+  return api<CheckoutResult>(`/v1/billing/checkout?plan_code=${encodeURIComponent(planCode)}`, userId, {
+    method: 'POST',
+  });
 }

@@ -7,6 +7,9 @@ COPY apps/web/pnpm-lock.yaml* ./
 COPY apps/web/yarn.lock* ./
 RUN corepack enable && pnpm install --frozen-lockfile 2>/dev/null || npm install --legacy-peer-deps
 COPY apps/web/ ./
+# Baked into the bundle at build time: set on the Railway web service, then redeploy.
+ARG NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN pnpm build 2>/dev/null || npm run build
 
 FROM node:22-alpine AS runner

@@ -331,3 +331,9 @@ Symptom: GET /v1/me/export 500 on Railway (UndefinedTable merchant_memory) while
 Cause: A `--` schema comment above the CREATE contained a literal `%` ("% allocation"). executescript pg path passed the whole statement (comments included) to psycopg2, whose %-format param substitution choked with empty params - so the CREATE never ran on Postgres. SQLite executescript ignores comments, so local never caught it.
 Fix: executescript pg path strips full-line `--` comments before execute (apps/api/db.py:119-125); regression test_executescript_pg_strips_comment_percent in tests/test_pg_translate.py. Redeployed API, table created at boot, export 200 live.
 Applies when: Any code that hands multi-statement SQL (with comments) to a %-formatting driver - sanitize or strip comments first; pin with a pure test.
+
+## 2026-10-29-57 Vault path must be the volume mount + duplicates must heal missing bytes
+Symptom: user stuck on already in your vault with zero extraction after several redeploys.
+Cause: (1) VAULT_PATH defaulted to ./data/vault (ephemeral /app/data/vault) while the Railway volume sat empty at /data/vault (0MB used) - every deploy wiped bytes but DB rows survived. (2) Duplicate re-upload restored bytes but kept the old status, so the worker never re-ran.
+Fix: VAULT_PATH=/data/vault env on FIN_SPY (volume now in use) + duplicate-with-restored-bytes resets to queued with requeued:true (tests/test_upload_restore.py 2). Receipt UI shows restored state. User re-uploads once to heal.
+Applies when: any content-addressed store - assert at boot that the store path is on persistent disk, and make dedup verify bytes exist, not just the row.

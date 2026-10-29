@@ -357,14 +357,28 @@ async def upload_document(
                 status = "needs_password"
 
     # Vault is a global content store (bytes once); documents are per-tenant rows.
+    bytes_restored = False
     if not storage_key.exists():
         storage_key.write_bytes(data)
+        bytes_restored = True
     doc_id = hashlib.sha256(f"{tenant_id}|{sha}".encode()).hexdigest()[:16]
     cur = db.execute("SELECT id, status FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
     existing = cur.fetchone()
     if existing:
         ex_id = existing["id"] if isinstance(existing, dict) else existing[0]
         ex_status = existing["status"] if isinstance(existing, dict) else existing[1]
+        requeued = False
+        if bytes_restored and ex_status != "queued":
+            # Disk was wiped (redeploy) while the DB row survived: bytes
+            # are back now, so requeue for extraction instead of
+            # stranding the user on "already in your vault".
+            db.execute("UPDATE source_documents SET status='queued' WHERE id=?", (ex_id,))
+            append_audit_log(tenant_id, user_id, "document.restore_requeue",
+                             "source_documents", ex_id,
+                             {"sha256": sha, "from_status": ex_status})
+            db.commit()
+            ex_status = "queued"
+            requeued = True
         return {
             "id": ex_id,
             "sha256": sha,
@@ -373,6 +387,8 @@ async def upload_document(
             "size_bytes": len(data),
             "status": ex_status,
             "duplicate": True,
+            "requeued": requeued,
+            "bytes_restored": bytes_restored,
             "is_encrypted": is_encrypted,
             "needs_password": pdf_needs_password,
             "tenant_id": tenant_id,

@@ -11,6 +11,8 @@ type VaultReceipt = {
   size_bytes: number;
   status: string;
   duplicate?: boolean;
+  requeued?: boolean;
+  bytes_restored?: boolean;
   trial_pages_remaining?: number;
 };
 
@@ -122,7 +124,11 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
                   <p>
                     <span className="px-2 py-0.5 rounded text-xs bg-blue-900 text-blue-200">{o.receipt.status}</span>{' '}
                     <span className="text-slate-400">
-                      {o.receipt.duplicate ? 'already in your vault - no quota used' : 'extraction starts within seconds'}
+                      {o.receipt.requeued
+                        ? 'file bytes were missing - restored, extracting again, no quota used'
+                        : o.receipt.duplicate
+                          ? 'already in your vault - no quota used'
+                          : 'extraction starts within seconds'}
                     </span>
                   </p>
                   <p className="font-mono text-xs text-slate-500">sha256:{o.receipt.sha256.slice(0, 16)}... - {(o.receipt.size_bytes / 1024).toFixed(1)} KB</p>

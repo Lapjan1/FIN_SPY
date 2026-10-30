@@ -27,7 +27,20 @@ filed under the asserted number; no card-tag concept.
 4. [x] Guardrails: multi-account manifest + UI warnings; privacy copy
    (one login = one subscriber's finances; per-account packs for
    sharing; each card number is its own account).
-5. [ ] Re-verify + commit + deploy + live smoke.
+5. [x] Re-verify + commit + deploy + live smoke.
+
+## Live evidence (API e8a5a6bc + web a69b9db0, both SUCCESS)
+- Invoice PDF upload -> 422 "not a bank statement (confidence 25%,
+  invoice)" with verdict, no row, no quota.
+- Statement CSV -> 200 with verification conf 0.625, needs_review
+  false, asserted stored.
+- Overlapping second CSV same account -> NDUP flag (5 of 6 overlap
+  live_a.csv) + DUP-SKIP (skipped 5) + audit rows, only new rows kept.
+- Verification endpoint combines gate + tamper + attribution live.
+- Live-smoke catch (fixed e5dfea2, pinned): CSV pages carry
+  width/height None and .get(key, default) returns the None ->
+  TypeError killed every CSV tamper verdict silently (class-only log).
+  None-safe dims + bbox; metadata-stage logs now include messages.
 
 ## Evidence
 - Step 1 `tests/test_intake_verification.py` 3 passed (red-first):

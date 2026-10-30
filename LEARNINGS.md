@@ -361,3 +361,9 @@ Symptom: worker attribution hunk reported success but tests showed the old behav
 Cause: trusted the script's print instead of reading the file; the swallowing try/except around the doc UPDATE hid the NameError for a full cycle.
 Fix: every splice script asserts its marker by reading the file back before printing green (see splice_worker_attribution2.py); fixed silently-swallowed NameError the same hour.
 Applies when: any generated edit - verify by reading the artifact, never by the generator's own report.
+
+## 2026-10-30-62 .get(key, default) returns stored None, and class-only logs hide it
+Symptom: every CSV tamper verdict missing live; worker log showed stage=tamper exc=TypeError with no message.
+Cause: text-reader pages store width/height as None, so page.get('width', 1000) returns None (the key exists) and None + 10 raises. Tests only ran tamper on PDFs (dims set). Class-only log line cost a full debug cycle.
+Fix: `or`-defaults for dims/bbox (e5dfea2), CSV tamper test pinned, metadata-stage logs include truncated messages (metadata errors carry no row values).
+Applies when: any .get() default over nullable columns/pages - use `or` when None is a live value; and log messages on metadata stages where PII cannot appear.

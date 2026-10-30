@@ -12,7 +12,17 @@ verifies) so per-account exports can be trusted.
 2. [x] Intake: upload takes optional account_number; worker verifies vs
    extracted number; mismatch surfaces; match stored.
 3. [x] Reports UI: picker drives all six downloads.
-4. [ ] Full re-verify + commit + deploy + live smoke.
+4. [x] Full re-verify + commit + deploy + live smoke.
+
+## Live evidence (API 5cac18c1 + web 4afeeab4, both SUCCESS)
+- Probe tenant: 2 CSVs uploaded with asserted 62111111111 / 40777777777.
+- Filed 48 + 45 txns under asserted numbers; docs read user-only
+  (extractor found no number — honest, no guess).
+- Evidence scoped: 1 original (FNB only), manifest scope set, audit note
+  present, verify_pack states scope + hashes OK.
+- POPIA scoped: 1 original, 48 txns all 62111111111, accounts = bank row
+  only. Zero ABSA bytes in either pack.
+- Whole-tenant default: scope null, 2 originals.
 
 ## Evidence
 - `tests/test_scoped_packs.py` 4 passed (red-first TypeError/KeyError):

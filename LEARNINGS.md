@@ -355,3 +355,9 @@ Symptom: sqlite3.ProgrammingError 2 placeholders vs 3 bindings on powerbi __unkn
 Cause: query-string splice updated but the param tuple two lines below kept the old shape; known-account tests passed because that branch was consistent.
 Fix: _unk-aware param tuples + tests/test_unknown_scope_reports.py covering unknown on trial/dashboard/auditor/powerbi, not just transactions.
 Applies when: any query built by string branches - test every branch, because the green branch proves nothing about its siblings.
+
+## 2026-10-30-61 A splice that prints green is not a splice that landed
+Symptom: worker attribution hunk reported success but tests showed the old behavior; the hunk was absent on disk while a later splice referencing its variables silently no-op'd inside try/except.
+Cause: trusted the script's print instead of reading the file; the swallowing try/except around the doc UPDATE hid the NameError for a full cycle.
+Fix: every splice script asserts its marker by reading the file back before printing green (see splice_worker_attribution2.py); fixed silently-swallowed NameError the same hour.
+Applies when: any generated edit - verify by reading the artifact, never by the generator's own report.

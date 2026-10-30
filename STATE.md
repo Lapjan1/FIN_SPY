@@ -1,6 +1,8 @@
-# STATE (updated 2026-10-30 - Account channel DONE 292 passed, see docs/tasks/FIX-account-channel.md)
+# STATE (updated 2026-10-30 - Account boundary DONE 299 passed, see docs/tasks/FIX-account-boundary.md)
 
 ## Working - Evidence with date
+- **ACCOUNT BOUNDARY LIVE 2026-10-30:** tenant = subscriber (one subscription, usage-metered), account = privacy boundary (e7c3dad). Evidence-pack + POPIA + signed summary accept account_number incl __unknown; manifests state scope; audit.json scope-filtered with continuity note + full head hash; verifier echoes scope. Intake takes optional account assertion (auto-creates bank row); worker verifies vs extracted number, assertion wins filing, mismatch/confirmed audited; docs expose asserted/extracted/match (inbox badges). Picker drives all six downloads. 299 passed (7 new red-first), tsc 0. LIVE API 5cac18c1 + web 4afeeab4: asserted uploads filed 48+45, scoped packs contain zero cross-account bytes, whole-tenant default intact. Learning 61.
+
 - **ACCOUNT CHANNEL LIVE 2026-10-30:** every function per bank account (71bba5e + bbbe977 + 84fcc25 + pie 74e36fb). Vendor auto-book writes rule-sourced classification + confirmed + audit (no more posted-but-unclassified orphans); POST /v1/transactions/{id}/move re-decodes confirmed rows out of 9999; GET /v1/bank-accounts + transactions/document filters + excel/auditor/powerbi account_number passthrough (422 on unknown) + __unknown sentinel on transactions/trial/dashboard/reports; global AccountSelector drives Transactions/Books/Reports/Dashboard with localStorage; Inbox badges; Excel Transactions sheet gains account/document/nature/category/rationale/status + 9999 method note; dashboard vendor treemap -> pie. 292 passed (17 new, red-first), tsc 0. LIVE API c9578c4c + web 883bcca9: 2 CSVs -> 93 txns, picker/filter/dashboard agree 93, accept->9999->Move->6030 je-55877673, workbook shows moved row confirmed/6030. Learnings 58-60.
 
 

@@ -14,7 +14,11 @@ uniform files unchanged; behavior on PDFs unchanged.
 ## Steps
 1. [x] Red test: titled CSV extracts rows.
 2. [x] Green: preamble-tolerant sniff.
-3. [ ] Full suite + commit + deploy + live smoke.
+3. [x] Full suite + commit + deploy + live smoke.
+
+## Live evidence (API 91c232ff SUCCESS)
+- Titled CSV upload (title + opening + header + 6 rows + closing):
+  gate True, 5 txns extracted. Before the fix: 0.
 
 ## Evidence
 - `tests/test_csv_sniff.py` 4 passed (red-first): titled CSV sniffs

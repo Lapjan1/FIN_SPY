@@ -20,7 +20,7 @@ export default function HelpPage() {
           <li className={stepCls}>
             <span className="font-bold text-blue-400">Step 1 - Upload.</span>{' '}
             <span className="text-slate-300">
-              Drop in a bank statement PDF on <a href="/upload" className={linkCls}>Upload</a>.
+              Drop in a bank statement (PDF, CSV or OFX) on <a href="/upload" className={linkCls}>Upload</a>.
               It is hashed into an immutable vault and queued for extraction behind a
               reconciliation gate (opening + rows must equal closing, both directions).
             </span>
@@ -37,8 +37,10 @@ export default function HelpPage() {
             <span className="font-bold text-blue-400">Step 3 - Peek and export.</span>{' '}
             <span className="text-slate-300">
               Drill any <a href="/dashboard" className={linkCls}>Dashboard</a> number back to the
-              exact highlighted line, ask <a href="/chat" className={linkCls}>Spy Chat</a>, then export
-              Excel, a signed PDF, or a verifiable evidence pack your auditor can check independently.
+              exact highlighted line, ask <a href="/chat" className={linkCls}>Spy Chat</a>, check your
+              payoff plan on <a href="/debt" className={linkCls}>Debt</a>, then export from
+              the <a href="/reports" className={linkCls}>Reports</a> page: Excel, a signed PDF,
+              a verifiable evidence pack, or your full POPIA data ZIP.
             </span>
           </li>
         </ol>
@@ -57,11 +59,23 @@ export default function HelpPage() {
           </div>
           <div className={stepCls}>
             <a href="/review" className={`${linkCls} font-semibold`}>Review queue</a>
-            <p className="text-slate-300 mt-1">Accept suggestions to post journals, or fix description, date, and amount with a required reason. Fixes repost the journal and re-check the running balance chain.</p>
+            <p className="text-slate-300 mt-1">Accept suggestions to post journals, or fix description, date, and amount with a required reason. Fixes repost the journal and re-check the running balance chain. Wrong rows get Reject / void: proposed rows flip to rejected, posted ones are cancelled with mirror-image reversals - history always stays.</p>
           </div>
           <div className={stepCls}>
             <a href="/transactions" className={`${linkCls} font-semibold`}>Transactions</a>
-            <p className="text-slate-300 mt-1">Your ledger. Click any row to see the exact highlighted line on the original PDF it came from.</p>
+            <p className="text-slate-300 mt-1">Your ledger. Click any row to see the exact highlighted line on the original it came from, or void it with a reason.</p>
+          </div>
+          <div className={stepCls}>
+            <a href="/books" className={`${linkCls} font-semibold`}>Books</a>
+            <p className="text-slate-300 mt-1">Your chart of accounts: switch templates (personal, SME, mixed sole-prop), read the trial balance per bank account, and watch the 9999 suspense watchdog for parked money.</p>
+          </div>
+          <div className={stepCls}>
+            <a href="/debt" className={`${linkCls} font-semibold`}>Debt</a>
+            <p className="text-slate-300 mt-1">Type what you owe and compare snowball vs avalanche payoff plans on your real monthly surplus, with a what-if for extra payments.</p>
+          </div>
+          <div className={stepCls}>
+            <a href="/reports" className={`${linkCls} font-semibold`}>Reports</a>
+            <p className="text-slate-300 mt-1">Every download, regenerated from your books on each click: Excel workbook, PowerBI pack, auditor CSV, evidence pack, signed PDF, and your full POPIA data ZIP.</p>
           </div>
           <div className={stepCls}>
             <a href="/dashboard" className={`${linkCls} font-semibold`}>Dashboard</a>
@@ -76,8 +90,8 @@ export default function HelpPage() {
             <p className="text-slate-300 mt-1">Sign in, plans, subscribe, and cancel. Your trial status lives here and in the nav badge.</p>
           </div>
           <div className={stepCls}>
-            <a href="/settings" className={`${linkCls} font-semibold`}>Settings (admin)</a>
-            <p className="text-slate-300 mt-1">Model choice, effort, and cost guards. Secret keys live in server env vars only - never in this table.</p>
+            <a href="/settings" className={`${linkCls} font-semibold`}>Settings</a>
+            <p className="text-slate-300 mt-1">Owners change model and effort; cost guards, billing keys, and the full table stay admin-only. Secret keys live in server env vars only - never in this table.</p>
           </div>
         </div>
       </section>

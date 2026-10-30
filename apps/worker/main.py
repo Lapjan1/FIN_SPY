@@ -95,7 +95,7 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
                   f" chance={verdict.get('tamper_chance')}")
         except Exception as e:
             print(f"worker: doc {doc_id} stage=tamper"
-                  f" exc={type(e).__name__}")
+                  f" exc={type(e).__name__} msg={str(e)[:100]}")
 
         # Overlap check pre-persist (known accounts only: unknown
         # fingerprints are doc-scoped by construction, so they cannot
@@ -175,7 +175,7 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
                     print(f"worker: doc {doc_id} stage=overlap near-dup flagged")
         except Exception as e:
             print(f"worker: doc {doc_id} stage=overlap"
-                  f" exc={type(e).__name__}")
+                  f" exc={type(e).__name__} msg={str(e)[:100]}")
 
         # Persist to DB per DB-first
         # For MVP, create source_spans, transactions via persist_to_db

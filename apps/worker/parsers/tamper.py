@@ -139,16 +139,20 @@ def check_visual_tampering_indicators(text: str, pages: List[Dict]) -> Tuple[boo
     # Check hidden text: words with bbox outside page or very small
     hidden_count = 0
     for page in pages:
+        # Text-reader pages carry width/height None: .get(key, default)
+        # returns the None, so 'or' is required, not the default.
+        pg_w = page.get('width') or 1000
+        pg_h = page.get('height') or 1000
         for line in page.get('lines', []):
-            bbox = line.get('bbox', [0,0,0,0])
-            x0,y0,x1,y1 = bbox
+            bbox = line.get('bbox') or [0, 0, 0, 0]
+            x0, y0, x1, y1 = bbox
             width = x1 - x0
             height = y1 - y0
             # Near-zero font size: height < 1
             if height < 1:
                 hidden_count += 1
             # Outside visible area
-            if x0 < -10 or y0 < -10 or x1 > page.get('width', 1000) + 10 or y1 > page.get('height', 1000) + 10:
+            if x0 < -10 or y0 < -10 or x1 > pg_w + 10 or y1 > pg_h + 10:
                 hidden_count += 1
 
     if hidden_count > 0:

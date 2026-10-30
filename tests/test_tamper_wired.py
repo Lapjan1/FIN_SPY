@@ -111,3 +111,31 @@ def test_verification_cross_tenant_denied(tmp_path):
     finally:
         cleanup_tenant(tenant)
         cleanup_tenant(tenant_b)
+
+
+def test_csv_doc_carries_tamper_verdict():
+    client, tenant, h, uid = _authed(prefix="tampc")
+    try:
+        csv = (b"Date,Description,Amount,Balance\n"
+               b"25 Oct 2026,WOOLWORTHS,-450.00,11550.00\n"
+               b"26 Oct 2026,RENT,-5000.00,6550.00\n"
+               b"27 Oct 2026,SALARY,20000.00,26550.00\n"
+               b"28 Oct 2026,SPAR,-300.00,26250.00\n"
+               b"29 Oct 2026,UBER,-150.00,26100.00\n"
+               b"30 Oct 2026,NETFLIX,-200.00,25900.00\n")
+        r = client.post("/v1/documents", headers=h,
+                        files={"file": ("c.csv", csv, "text/csv")})
+        assert r.status_code == 200, r.text
+        doc_id = r.json()["id"]
+        row = get_db().execute(
+            "SELECT sha256, storage_key FROM source_documents WHERE id=?",
+            (doc_id,)).fetchone()
+        d = dict(row)
+        process_one_document(doc_id, tenant, d["sha256"],
+                             d["storage_key"], uid)
+        docs = client.get("/v1/documents", headers=h).json()
+        mine = [x for x in docs if x["id"] == doc_id][0]
+        assert mine["tamper"] is not None
+        assert mine["tamper"]["is_original_likely"] is True
+    finally:
+        cleanup_tenant(tenant)

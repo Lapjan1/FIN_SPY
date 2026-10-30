@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from apps.worker.parsers.base import parse_sa_amount, fingerprint_txn
 from apps.worker.parsers.fnb import normalize_date, parse_fnb_lines
+from apps.worker.parsers.stdb import parse_stdb_lines
+from apps.worker.parsers.absa import parse_absa_lines
 from apps.worker.parsers.extractor import extract_text_with_bbox, deterministic_parse, llm_fallback
 
 def test_sa_amount_parsing_red():
@@ -169,3 +171,29 @@ def test_fnb_balances_derived_when_unstated():
     result = parse_fnb_lines(pages)
     assert result.opening_balance_minor == 1234055
     assert result.closing_balance_minor == 689055
+def _period_pages():
+    return [{
+        "page_no": 1, "width": 595, "height": 842,
+        "lines": [
+            {"line_id": "L001", "bbox": [0, 0, 100, 10], "text": "Statement Period : 1 July 2023 to 31 July 2023", "text_hash": "a"},
+            {"line_id": "L002", "bbox": [0, 10, 100, 20], "text": "Statement Date : 31 July 2023", "text_hash": "b"},
+        ],
+    }]
+
+
+def test_period_line_never_a_row_fnb():
+    result = parse_fnb_lines(_period_pages())
+    assert result.rows == []
+    assert {u["line_id"] for u in result.unaccounted_lines} == {"L001", "L002"}
+
+
+def test_period_line_never_a_row_stdb():
+    result = parse_stdb_lines(_period_pages())
+    assert result.rows == []
+    assert {u["line_id"] for u in result.unaccounted_lines} == {"L001", "L002"}
+
+
+def test_period_line_never_a_row_absa():
+    result = parse_absa_lines(_period_pages())
+    assert result.rows == []
+    assert {u["line_id"] for u in result.unaccounted_lines} == {"L001", "L002"}

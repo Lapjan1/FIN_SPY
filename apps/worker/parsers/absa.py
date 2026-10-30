@@ -62,7 +62,7 @@ def parse_absa_lines(pages: List[Dict]) -> ExtractionResult:
                     except:
                         pass
 
-            if re.search(r'Page \d+|Account Number|Absa|Branch Code|Period:', text, re.I):
+            if re.search(r'Page \d+|Statement\s+Period|Statement\s+Date|Account Number|Absa|Branch Code|Period:', text, re.I):
                 if not re.search(r'Opening Balance|Closing Balance', text, re.I):
                     unaccounted.append({"line_id": line['line_id'], "reason": "header"})
                     continue

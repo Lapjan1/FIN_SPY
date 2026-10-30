@@ -105,7 +105,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                         pass
 
             # Skip header/footer noise
-            if re.search(r'Page \d+|Account Number|FNB Statement|First National Bank.*Account|Branch Code|Period:|Date\s+Description\s+Amount\s+Balance', text, re.I):
+            if re.search(r'Page \d+|Statement\s+Period|Statement\s+Date|Account Number|FNB Statement|First National Bank.*Account|Branch Code|Period:|Date\s+Description\s+Amount\s+Balance', text, re.I):
                 # More specific header skip - avoid skipping opening/closing
                 if not re.search(r'Opening Balance|Closing Balance', text, re.I):
                     unaccounted.append({"line_id": line['line_id'], "reason": "header"})

@@ -63,7 +63,7 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                     except:
                         pass
 
-            if re.search(r'Page \d+|Account No|Standard Bank|Branch|Period:|Date\s+Description', text, re.I):
+            if re.search(r'Page \d+|Statement\s+Period|Statement\s+Date|Account No|Standard Bank|Branch|Period:|Date\s+Description', text, re.I):
                 if not re.search(r'Opening Balance|Closing Balance', text, re.I):
                     unaccounted.append({"line_id": line['line_id'], "reason": "header"})
                     continue

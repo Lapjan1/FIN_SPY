@@ -2,6 +2,8 @@
 
 ## Working - Evidence with date
 
+- **8.5 CLOSES LIVE 2026-10-30:** DSN redaction + DEV_AUTH gate + trigger-skip + README pitch/disclosure + email claim cut + privacy parity (f51ad5d). 275 passed, tsc 0, 44/44 re-audit on API 19965f33 + web 227b7516, logs show redacted DSN + one demo-auth WARN + zero pg WARN. Audit bumped 8.5, video excluded per owner.
+
 - **AUDIT FIXES + 44/44 LIVE 2026-10-29:** GUI audit script (16 pages + full functional pass) caught 3 live gaps, all red/green fixed: CSV/text-reader (0eca6ee), content-sniff dispatch for vault .pdf names (4d8e72c), duplicate-with-lost-bytes restore+requeue + VAULT_PATH=/data/vault volume env (5f97b33, Learning 57). Evidence docs docs/tasks/FIX-*.md + DEPLOY-gui-audit.md. LIVE API 14a9d9cc + web b86364f6: probe CSV 48 rows, trial balanced, all 5 downloads real bytes. Suite 261 passed, tsc 0. User re-uploads once to heal c681db6a.
 
 - **PROMISE PLAN P0+P1 DONE + DEPLOYED 2026-10-29:** marketing promises wired end-to-end: generic 95pc extractor (P0-A0, 20/20 recall) between bank parsers and LLM last-resort; byte downloads incl POPIA ZIP with originals (P0-A/B); /reports /books /debt screens (P0-C/E/F); trial-balance ?account_number (P0-D); reject/void reversals + UI (P0-G, Q2 history); owner model/effort prefs (P0-H); dead report queue killed, sync + 422 (P0-J); trial copy pages->uploads (P1-B); stranded-row runbook docs/runbooks/stranded-rows.md (P1-C); P1-A email statically verified, live inbox check left to owner. Evidence: 255 passed, tsc 0, task docs docs/tasks/P0-*.md + P1-*.md. LIVE: API dep 1e26157b + web dep 5b7f9e4a, smoke register/login/books/trial/suspense/prefs/debt-defaults/auditor-csv/export-ZIP-PK/sync-excel-ready/bogus-422/reject-422 all 200-or-correct + /books /debt /reports /settings /review /transactions 200. HOTFIX in deploy: pg comment-% crash (merchant_memory never created, export 500) fixed by comment-strip in executescript. Learning 56.
@@ -74,5 +76,6 @@
 1. SaaS testing on live: set PAYSTACK_SECRET_KEY (sk_test) + plan codes on API service, click through register -> upload synthetic statement -> review -> dashboard -> test checkout on https://web-production-74f81.up.railway.app, confirm webhook activates plan
 2. Session-token auth hardening (before real customers/Paystack live): replace X-User-Id dev auth with opaque session tokens or JWT per AUTH_PAYSTACK gap note; UI already branches 401 via isAuthError
 3. Day9 close + Day10 submit: record 2-3 min video of the REAL flow per README hero flow, UI-as-stranger review pass (learning 40), full gate (pytest + ruff + tsc + build + golden), code freeze, submit by 12:00 SAST buffer hard cutoff 9:00 PM ET
+
 
 

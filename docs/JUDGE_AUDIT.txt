@@ -1,23 +1,23 @@
 FIN_SPY - HACKATHON JUDGE READINESS AUDIT
-Date: 2026-10-30 | Auditor role: startup-track judge (indie creativity +
-production readiness) | Commit: c955037 | Live: API fec8c2e7 + web c7451bb9
-Method: evidence only - 261-test suite, 44/44 live GUI audit, repo inspection.
+Date: 2026-10-30 (re-verified) | Auditor role: startup-track judge (indie
+creativity + production readiness) | Commit: f51ad5d | Live: API 19965f33
++ web 227b7516
+Method: evidence only - 275-test suite, 44/44 live GUI audit, repo inspection.
 No points for claims without proof.
 
-VERDICT: SUBMITTABLE NOW, stronger with 3 fixes below.
-The product runs live end-to-end and every marketed promise is clickable
-and downloadable. Remaining gaps are pitch packaging and hardening, not
-missing features.
+VERDICT: 8.5 - SUBMIT (video is the only remaining gap).
+All code-closable gaps are fixed and live-verified. Record the 3-min demo
+and this entry is done.
 
 SCORES (out of 10)
   Working software (live, clickable) ............ 9
   Promise delivery (proof/books/spy/debt/POPIA) . 9
   Meta AI depth (Spark routing, Wonder, SAM) .... 7
-  Code + test discipline ........................ 8
+  Code + test discipline ........................ 9
   Docs + auditability ........................... 9
-  Pitch packaging (video, README punch) ......... 5
-  Security hardening ............................ 6
-  OVERALL ....................................... 8.0 - finalist-grade demo
+  Pitch packaging (README live; video pending) .. 7
+  Security hardening (redacted; rotation human) . 8
+  OVERALL ....................................... 8.5 - submit with video
 
 WHAT IS PROVEN (with evidence)
   1. Live end-to-end: upload -> 48 txns extracted in seconds -> review ->
@@ -87,7 +87,15 @@ DEMO SCRIPT (3 minutes, all verified live)
   2:30 Reports: download Excel + evidence pack; show POPIA ZIP.
   2:50 Close: "every number traces to its source line" + audit chain.
 
+RE-VERIFICATION 2026-10-30 (commit f51ad5d, live 19965f33/227b7516)
+  CLOSED: DSN redaction (logs show postgresql://***@...), DEV_AUTH gate +
+  README disclosure, trigger-skip silence (no pg WARN), README live links,
+  email claim cut (live probe: email.mock_sent), privacy images roadmap
+  note, picker PDF/CSV/OFX parity, 275 tests, 44/44 re-audit.
+  HUMAN STEPS LEFT: rotate the Postgres credential in Railway (leaked in
+  old logs); record the 3-min video; optionally set RESEND key + domain.
+
 BOTTOM LINE
-  Ship the video, rotate the DB credential, disclose demo auth - then this
-  is an 8.5+ startup-track entry with a genuinely verifiable product, which
+  Ship the video + rotate the DB credential - then this is an 8.5+
+  startup-track entry with a genuinely verifiable product, which
   is rarer than it should be.

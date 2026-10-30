@@ -1,0 +1,93 @@
+FIN_SPY - HACKATHON JUDGE READINESS AUDIT
+Date: 2026-10-30 | Auditor role: startup-track judge (indie creativity +
+production readiness) | Commit: c955037 | Live: API fec8c2e7 + web c7451bb9
+Method: evidence only - 261-test suite, 44/44 live GUI audit, repo inspection.
+No points for claims without proof.
+
+VERDICT: SUBMITTABLE NOW, stronger with 3 fixes below.
+The product runs live end-to-end and every marketed promise is clickable
+and downloadable. Remaining gaps are pitch packaging and hardening, not
+missing features.
+
+SCORES (out of 10)
+  Working software (live, clickable) ............ 9
+  Promise delivery (proof/books/spy/debt/POPIA) . 9
+  Meta AI depth (Spark routing, Wonder, SAM) .... 7
+  Code + test discipline ........................ 8
+  Docs + auditability ........................... 9
+  Pitch packaging (video, README punch) ......... 5
+  Security hardening ............................ 6
+  OVERALL ....................................... 8.0 - finalist-grade demo
+
+WHAT IS PROVEN (with evidence)
+  1. Live end-to-end: upload -> 48 txns extracted in seconds -> review ->
+     accept posts balanced journal -> trial balanced -> reject voids with
+     reversals -> bbox drill-down. (44/44 live audit, this deploy.)
+  2. Proof-not-numbers: every txn links to source line + bbox; SHA256 vault
+     on persistent volume; hash-chained audit; evidence pack verifies via
+     scripts/verify_pack.py.
+  3. Self-building books: 3 COA templates, per-account trial balances,
+     9999 suspense watchdog, merchant memory, revisioned human decisions.
+  4. Spy + KPIs: subscriptions/duplicates/fees/anomalies persisted as flags,
+     leak score, runway/burn/savings on dashboard.
+  5. Debt killer: snowball/avalanche on real ledger surplus, what-if, served
+     disclaimer; R45k/R20k/R10k ordering pinned by tests.
+  6. Downloads regen from DB on every click: Excel, PowerBI ZIP, auditor CSV,
+     evidence pack, signed PDF, POPIA ZIP with originals. All byte-verified.
+  7. Extractor honesty: bank parsers -> generic 95% engine (20/20 recall) ->
+     LLM last resort only; zero-row failure, never mock rows (Q3).
+  8. Engineering trail: 261 pytest green, tsc 0, 15 red/green task docs,
+     57 learnings, STATE + runbooks. A judge can re-run everything.
+
+GAPS THAT COST POINTS
+  MUST FIX BEFORE SUBMISSION:
+  1. NO DEMO VIDEO. Most hackathons score the video harder than the repo.
+     Record 3 min: upload -> review accept -> books -> debt -> downloads.
+  2. Boot log prints the full Postgres URL with password (seen in Railway
+     logs twice). Rotate the credential + redact. A judge WILL dock this.
+  3. Auth is X-User-Id dev header, no JWT/sessions. Fine to disclose as
+     "demo auth", fatal if presented as production auth. Say it out loud.
+
+  SHOULD FIX (half-day each):
+  4. Email (welcome/reset) is wired but inbox delivery was never verified
+     (needs RESEND_API_KEY + sender domain). Verify or cut the claim.
+  5. Image uploads (.jpg/.png) accepted by intake but fail with "OCR not
+     wired". Either wire it or reject images at upload with a clear message.
+  6. README is 16KB of project notes, not a pitch. Judges skim: add 60-sec
+     pitch, live links, 3 screenshots, architecture diagram at the top.
+  7. Pre-existing boot WARN (sqlite trigger fragment on Postgres) is noise
+     in every deploy log. Silence it; it looks broken to a judge.
+
+  MINOR / DISCLOSE-AND-MOVE-ON:
+  8. Trial meter counts uploads but API/DB names still say trial_pages.
+     User copy is fixed; internals are honest tech debt. Mention once.
+  9. PyMuPDF AGPL licensing is flagged with a fallback plan but unresolved
+     for SaaS. One slide/sentence covers it.
+  10. Meta rate limit (100 RPM/team) + Supabase idle-pause are documented
+      risks with mitigations (limiter, uptime ping). Good - keep visible.
+
+JUDGE SIMULATION (likely questions + answers)
+  "Is the AI real or mocked?" Real: MetaClient with per-tenant routing,
+  standard tier only, contributor tier banned for real docs; LLM is last
+  resort with line-ID grounding and quote checks. Zero-row on failure.
+  "Whose data trains what?" Nothing trains: standard tier, no-training.
+  "Can I verify a report independently?" Yes: evidence pack + offline
+  verifier script + manifest hashes. Strongest differentiator - lead with it.
+  "Multi-tenant safe?" tenant_id isolation + cross-tenant 403 tests; but
+  demo auth header - disclose.
+  "What breaks at scale?" Single uvicorn + in-process worker; fine for demo
+  and early users, needs a worker service past that. Say so.
+
+DEMO SCRIPT (3 minutes, all verified live)
+  0:00 Landing + promise list.
+  0:30 Upload FNB CSV/PDF -> receipt -> inbox status flips in seconds.
+  1:00 Review queue: suggest -> accept -> journal posted.
+  1:30 Transactions: click row -> highlighted source line (the money shot).
+  2:00 Books: template switch + per-account trial; Debt: avalanche plan.
+  2:30 Reports: download Excel + evidence pack; show POPIA ZIP.
+  2:50 Close: "every number traces to its source line" + audit chain.
+
+BOTTOM LINE
+  Ship the video, rotate the DB credential, disclose demo auth - then this
+  is an 8.5+ startup-track entry with a genuinely verifiable product, which
+  is rarer than it should be.

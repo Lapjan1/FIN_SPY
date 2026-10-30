@@ -4,11 +4,11 @@ Last updated: October 26, 2026
 This policy explains how FIN_SPY collects, uses, stores, and protects your information under the Protection of Personal Information Act (POPIA).
 
 ## 1. Information We Collect
-We collect information you provide when you register, upload bank statements (PDF/CSV/OFX), invoices/receipts (images), create entities (personal/business), and use AI features. This includes:
+We collect information you provide when you register, upload bank statements (PDF/CSV/OFX), create entities (personal/business), and use AI features. Invoice/receipt photo uploads are planned but not accepted yet (the API returns a clear 422 until OCR ships). This includes:
 - Account: name, email, password_hash bcrypt
 - Financial: bank statement transactions (date, description_raw, amount_minor Decimal, balance_after, fingerprint SHA256(date|amount|desc_norm)), document SHA256, storage_key content-hash, page bbox, line_id, source_spans
 - Classification: private/business/mixed %, category, rationale, decided_by
-- Usage: pages processed, tokens, exports, audit_log actions
+- Usage: uploads processed, tokens, exports, audit_log actions
 - Technical: upload IP, user_agent, tenant_id
 
 We do NOT store your raw PDFs as searchable text beyond the extracted word spans. Originals are preserved byte-for-byte in an immutable, content-addressed vault (keyed by SHA256 hash) and are never overwritten.

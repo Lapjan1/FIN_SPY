@@ -40,7 +40,7 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
 
   async function send() {
     if (files.length === 0) {
-      setError('Choose one or more bank statement PDFs first.');
+      setError('Choose one or more bank statements first (PDF, CSV or OFX).');
       return;
     }
     setWorking(true);
@@ -74,7 +74,7 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
       <div>
         <h1 className="text-2xl font-bold">Upload - hashed into the vault, never overwritten</h1>
         <p className="text-sm text-slate-400 mt-1">
-          One or more SA bank PDFs at a time. SHA256 content-hash + trial quota checked first;
+          One or more SA bank statements at a time (PDF, CSV or OFX). SHA256 content-hash + trial quota checked first;
           encrypted files need the password once (never stored). Extraction starts within seconds.
         </p>
       </div>
@@ -88,7 +88,7 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
           <input
             type="file"
             multiple
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,.csv,.ofx"
             onChange={(e) => setFiles(Array.from(e.target.files || []))}
             className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-sm"
           />

@@ -108,17 +108,28 @@ function DashboardInner({ uid, me }: { uid: string; me: Me }) {
     ],
   };
 
-  const treemapData = data?.totals
+  const pieData = data?.totals
     ? Object.entries(data.totals.vendor_counts)
       .map(([name, minor]) => ({ name, value: Math.round((minor / 100) * 100) / 100 }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 12)
     : [];
-  const treemapOption = {
+  const pieOption = {
     backgroundColor: 'transparent',
     textStyle: { color: '#e2e8f0' },
-    tooltip: { formatter: (p: { name: string; value: number }) => `${p.name}: R${p.value}` },
-    series: [{ type: 'treemap', data: treemapData, label: { color: '#e2e8f0' } }],
+    tooltip: {
+      trigger: 'item',
+      formatter: (p: { name: string; value: number; percent: number }) =>
+        `${p.name}: R${p.value} (${p.percent.toFixed(1)}%)`,
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['35%', '70%'],
+        data: pieData,
+        label: { color: '#e2e8f0', formatter: '{b}\nR{c}' },
+      },
+    ],
   };
 
   const radarSubs = flags
@@ -252,10 +263,10 @@ function DashboardInner({ uid, me }: { uid: string; me: Me }) {
             </div>
             <div className="border border-slate-800 rounded p-4">
               <h2 className="font-semibold text-sm mb-2">Outflow by vendor</h2>
-              {treemapData.length === 0 ? (
+              {pieData.length === 0 ? (
                 <p className="text-sm text-slate-400">No vendor data yet.</p>
               ) : (
-                <ReactECharts option={treemapOption} style={{ height: 260 }} />
+                <ReactECharts option={pieOption} style={{ height: 260 }} />
               )}
             </div>
           </div>

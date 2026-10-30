@@ -14,6 +14,7 @@ type VaultReceipt = {
   requeued?: boolean;
   bytes_restored?: boolean;
   trial_pages_remaining?: number;
+  asserted_account_number?: string | null;
 };
 
 type Outcome = { name: string; ok: boolean; receipt?: VaultReceipt; error?: string };
@@ -29,6 +30,7 @@ export default function UploadPage() {
 function UploadInner({ uid, me }: { uid: string; me: Me }) {
   const [files, setFiles] = useState<File[]>([]);
   const [password, setPassword] = useState('');
+  const [account, setAccount] = useState('');
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -52,7 +54,7 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
       const file = files[i];
       setProgress(`Uploading ${i + 1} of ${files.length}: ${file.name}`);
       try {
-        const out = (await uploadDocument(uid, file, password || undefined)) as unknown as VaultReceipt;
+        const out = (await uploadDocument(uid, file, password || undefined, account.trim() || undefined)) as unknown as VaultReceipt;
         done.push({ name: file.name, ok: true, receipt: out });
       } catch (e) {
         if (isPaywallError(e)) {
@@ -104,6 +106,15 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
             placeholder="PDF password (only if encrypted, never stored)"
             className="w-full p-2 bg-slate-900 border border-slate-700 rounded"
           />
+          <label className="block space-y-1 text-sm">
+            <span className="text-xs text-slate-400">Bank account number (which account is this statement for? New numbers are added automatically)</span>
+            <input
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
+              placeholder="e.g. 62123456789 (blank = let the extractor guess)"
+              className="w-full p-2 bg-slate-900 border border-slate-700 rounded"
+            />
+          </label>
           <button onClick={send} disabled={working} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
             {working ? 'Uploading' : `Upload ${files.length === 0 ? 'statements' : `${files.length} file${files.length === 1 ? '' : 's'}`}`}
           </button>
@@ -132,6 +143,9 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
                     </span>
                   </p>
                   <p className="font-mono text-xs text-slate-500">sha256:{o.receipt.sha256.slice(0, 16)}... - {(o.receipt.size_bytes / 1024).toFixed(1)} KB</p>
+                  {o.receipt.asserted_account_number ? (
+                    <p className="text-xs text-slate-400">Filed under account {o.receipt.asserted_account_number} (verified after extraction)</p>
+                  ) : null}
                   {typeof o.receipt.trial_pages_remaining === 'number' ? (
                     <p className="text-xs text-slate-400">Trial uploads left: {o.receipt.trial_pages_remaining}</p>
                   ) : null}

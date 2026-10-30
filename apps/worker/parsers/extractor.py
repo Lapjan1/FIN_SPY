@@ -437,7 +437,30 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
     db = get_db()
 
     # Handle account_number per bank account: create account if not exists with tenant_id + account_number unique
-    account_number = result.statement.get("account_number") if result.statement else None
+    extracted_number = result.statement.get("account_number") if result.statement else None
+    asserted_number = None
+    try:
+        drow = db.execute(
+            "SELECT asserted_account_number FROM source_documents"
+            " WHERE id=?", (document_id,)).fetchone()
+        if drow:
+            d = dict(drow) if not isinstance(drow, dict) else drow
+            asserted_number = (d.get("asserted_account_number") or "").strip() or None
+    except Exception:
+        asserted_number = None  # column missing on old DBs: proceed unattributed
+    account_number = asserted_number or extracted_number
+    if asserted_number and extracted_number:
+        from apps.api.db import append_audit_log
+        if asserted_number == extracted_number:
+            append_audit_log(tenant_id, None, "document.account_confirmed",
+                             "source_documents", document_id,
+                             {"account_number": asserted_number})
+        else:
+            append_audit_log(tenant_id, None, "document.account_mismatch",
+                             "source_documents", document_id,
+                             {"asserted": asserted_number,
+                              "extracted": extracted_number,
+                              "filed_under": asserted_number})
     bank_name = result.statement.get("bank") or result.statement.get("bank_name") if result.statement else None
     branch_code = result.statement.get("branch_code") if result.statement else None
     account_id = None
@@ -463,11 +486,12 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
                 row = cur.fetchone()
                 if row:
                     account_id = row["id"] if isinstance(row, dict) else row[0]
-        # Update source_documents with account info
+        # Update source_documents: account_number is the FILING
+        # (assertion wins); extracted_account_number is the FINDING.
         try:
             db.execute(
-                "UPDATE source_documents SET account_id=?, account_number=?, bank_name=?, branch_code=? WHERE id=?",
-                (account_id, account_number, bank_name, branch_code, document_id)
+                "UPDATE source_documents SET account_id=?, account_number=?, extracted_account_number=?, bank_name=?, branch_code=? WHERE id=?",
+                (account_id, account_number, extracted_number, bank_name, branch_code, document_id)
             )
         except Exception:
             pass

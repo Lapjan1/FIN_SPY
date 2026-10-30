@@ -38,6 +38,10 @@ def main():
 
     manifest = json.loads(manifest_path.read_text())
     print(f"Manifest version {manifest.get('manifest_version')} generated {manifest.get('generated_at_utc')}")
+    scope = manifest.get('scope', {})
+    print(f"Scope: account_number={scope.get('account_number') if scope else 'whole tenant (no scope key)'}")
+    if manifest.get('audit_note'):
+        print(f"Audit note: {manifest['audit_note']}")
 
     # 1. Recompute each file SHA256 vs manifest
     ok = True

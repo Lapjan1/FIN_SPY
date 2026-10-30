@@ -31,10 +31,11 @@ def signing_configured() -> bool:
 
 
 def build_report_pdf(tenant_id: str, from_date: str | None, to_date: str | None,
-                     out_path: Path) -> Dict:
+                     out_path: Path, account_number=None) -> Dict:
     """One-page summary PDF from DB (pymupdf). Returns path/sha/pages."""
     import fitz
     from apps.api.db import get_db
+    from apps.api.reports import _scope_clause, _scoped_subqueries
     from apps.worker.spy.kpi import compute_period_totals
 
     db = get_db()
@@ -45,14 +46,31 @@ def build_report_pdf(tenant_id: str, from_date: str | None, to_date: str | None,
     if to_date:
         q += " AND txn_date<=?"
         p.append(to_date)
+    s_clause, s_params = _scope_clause("", account_number)
     cur = db.execute("SELECT amount_minor, direction, txn_date FROM transactions"
-                     " WHERE tenant_id=?" + q, tuple(p))
+                     " WHERE tenant_id=?" + q + s_clause,
+                     tuple(p) + tuple(s_params))
     txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     totals = compute_period_totals(txns)
-    cur = db.execute("SELECT COUNT(*) as n FROM accounts WHERE tenant_id=?", (tenant_id,))
+    if account_number == "__unknown":
+        bank_match, bank_params = "account_number IN ('','unknown')", []
+    elif account_number:
+        bank_match, bank_params = "account_number=?", [account_number]
+    else:
+        bank_match, bank_params = "1=1", []
+    cur = db.execute("SELECT COUNT(*) as n FROM accounts WHERE tenant_id=?"
+                     + (" AND " + bank_match if account_number else ""),
+                     (tenant_id, *bank_params)
+                     if account_number else (tenant_id,))
     row = cur.fetchone()
     n_acc = row["n"] if isinstance(row, dict) else row[0]
-    cur = db.execute("SELECT COUNT(*) as n FROM flags WHERE tenant_id=?", (tenant_id,))
+    txn_sub, tpl, _, _ = _scoped_subqueries(account_number)
+    flag_gate = (" AND id IN (SELECT flag_id FROM flag_links"
+                 " WHERE transaction_id"
+                 f" IN ({txn_sub}))") if account_number else ""
+    flag_params = (tenant_id, *tpl) if account_number else ()
+    cur = db.execute("SELECT COUNT(*) as n FROM flags WHERE tenant_id=?"
+                     + flag_gate, (tenant_id, *flag_params))
     row = cur.fetchone()
     n_flags = row["n"] if isinstance(row, dict) else row[0]
     cur = db.execute("SELECT row_hash FROM audit_log WHERE tenant_id=?"
@@ -69,6 +87,7 @@ def build_report_pdf(tenant_id: str, from_date: str | None, to_date: str | None,
         "FIN_SPY Forensic Summary Report",
         f"Tenant: {tenant_id}",
         f"Period: {from_date or '...'} to {to_date or '...'}",
+        f"Scope: {account_number or 'whole tenant'}",
         f"Generated: {datetime.now(timezone.utc).isoformat()}",
         "",
         f"Transactions: {totals['txn_count']}",
@@ -87,7 +106,9 @@ def build_report_pdf(tenant_id: str, from_date: str | None, to_date: str | None,
         y += 20
     doc.save(str(out_path))
     doc.close()
-    return {"path": str(out_path), "sha256": _sha256_file(out_path), "pages": 1}
+    return {"path": str(out_path), "sha256": _sha256_file(out_path),
+            "pages": 1, "txn_count": totals["txn_count"],
+            "scope": {"account_number": account_number}}
 
 
 def _load_signer():
@@ -175,7 +196,7 @@ def verify_pdf_file(path: Path) -> Dict:
 
 
 def build_and_sign(tenant_id: str, from_date: str | None,
-                   to_date: str | None) -> Dict:
+                   to_date: str | None, account_number=None) -> Dict:
     from apps.api.reports import _validate_window
 
     if not signing_configured():
@@ -185,10 +206,12 @@ def build_and_sign(tenant_id: str, from_date: str | None,
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     unsigned = REPORTS_PATH / f"report_{tenant_id}_{ts}.pdf"
     signed = REPORTS_PATH / f"report_{tenant_id}_{ts}_signed.pdf"
-    info = build_report_pdf(tenant_id, from_date, to_date, unsigned)
+    info = build_report_pdf(tenant_id, from_date, to_date, unsigned,
+                            account_number)
     sig = sign_pdf_file(unsigned, signed)
     out = {"unsigned": info, "signed": sig, "from_date": from_date,
-           "to_date": to_date}
+           "to_date": to_date,
+           "scope": {"account_number": account_number}}
     out["file_key"] = sig["path"]
     out["sha256"] = sig["sha256"]
     return out

@@ -85,6 +85,9 @@ export type DocInfo = {
   uploaded_at_utc: string;
   account_id?: string | null;
   account_number?: string | null;
+  asserted_account_number?: string | null;
+  extracted_account_number?: string | null;
+  account_match?: string | null;
   bank_name?: string | null;
   branch_code?: string | null;
 };
@@ -496,10 +499,12 @@ export async function uploadDocument(
   userId: string,
   file: File,
   password?: string,
+  accountNumber?: string,
 ): Promise<Record<string, unknown>> {
   const form = new FormData();
   form.append('file', file);
   if (password) form.append('pdf_password', password);
+  if (accountNumber) form.append('account_number', accountNumber);
   const res = await fetch(`${API_BASE}/v1/documents`, {
     method: 'POST',
     headers: { 'X-User-Id': userId },

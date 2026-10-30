@@ -49,7 +49,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/reports/evidence-pack',
     filename: 'finspy-evidence.zip',
     dated: false,
-    accounted: false,
+    accounted: true,
   },
   {
     id: 'signed',
@@ -58,7 +58,7 @@ const ITEMS: Item[] = [
     path: (from, to) => `/v1/reports/signed-pdf${dates(from, to)}`,
     filename: 'finspy-summary.pdf',
     dated: true,
-    accounted: false,
+    accounted: true,
   },
   {
     id: 'popia',
@@ -67,7 +67,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/me/export',
     filename: 'finspy-my-data.zip',
     dated: false,
-    accounted: false,
+    accounted: true,
   },
 ];
 
@@ -137,7 +137,8 @@ function ReportsInner({ uid, me }: { uid: string; me: Me }) {
         <AccountSelector uid={uid} value={account} onChange={pickAccount} />
       </div>
       <p className="text-xs text-slate-500">
-        Excel, PowerBI, and Auditor CSV slice by account. Evidence pack, signed PDF, and POPIA stay whole-tenant.
+        Every download respects the account picker: pick an account and the file contains only that
+        account&apos;s rows and originals. &quot;All accounts&quot; exports the whole tenant.
       </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
       {warning ? <p className="text-sm text-amber-300">Warning: {warning}</p> : null}

@@ -244,6 +244,8 @@ def init_db():
         entity_id TEXT,
         account_id TEXT,
         account_number TEXT,
+        asserted_account_number TEXT,
+        extracted_account_number TEXT,
         bank_name TEXT,
         branch_code TEXT,
         sha256 TEXT NOT NULL,
@@ -1264,6 +1266,8 @@ def _ensure_schema(db: DbHandle):
         ("tenants", "active_template", "TEXT DEFAULT 'personal'"),
         ("source_documents", "account_id", "TEXT"),
         ("source_documents", "account_number", "TEXT"),
+        ("source_documents", "asserted_account_number", "TEXT"),
+        ("source_documents", "extracted_account_number", "TEXT"),
         ("source_documents", "bank_name", "TEXT"),
         ("source_documents", "branch_code", "TEXT"),
         ("transactions", "account_id", "TEXT"),
@@ -1278,6 +1282,17 @@ def _ensure_schema(db: DbHandle):
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except Exception:
             pass  # column exists
+    # Backfill: rows filed before attribution carry the extractor
+    # finding in account_number; copy it to the evidence column once.
+    try:
+        db.execute(
+            "UPDATE source_documents SET extracted_account_number="
+            "account_number WHERE asserted_account_number IS NULL"
+            " AND extracted_account_number IS NULL"
+            " AND account_number IS NOT NULL"
+            " AND account_number NOT IN ('', 'unknown')")
+    except Exception:
+        pass
     # Composite PK for the txn<->span link table: ON CONFLICT
     # (transaction_id, span_id) needs the matching constraint on pg.
     try:

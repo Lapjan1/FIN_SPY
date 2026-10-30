@@ -246,12 +246,14 @@ def me(user_id: int = Depends(require_login)):
     return {"user": user, "trial_pages_remaining": trial, "is_trial_unlimited": trial is None}
 
 @app.get("/v1/me/export")
-def export_my_data(user_id: int = Depends(require_login)):
+def export_my_data(account_number: Optional[str] = None,
+                       user_id: int = Depends(require_login)):
     """POPIA subject-access export: everything held on your tenant."""
     db = get_db()
     tenant_id = _tenant_of(user_id)
     from .reports import build_popia_zip
-    zip_path = build_popia_zip(tenant_id)
+    _require_account(tenant_id, account_number)
+    zip_path = build_popia_zip(tenant_id, account_number)
     append_audit_log(tenant_id, user_id, "account.data_export", "users",
                      str(user_id), {"file": Path(zip_path).name})
     return FileResponse(zip_path, media_type="application/zip",
@@ -285,6 +287,7 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(...),
     pdf_password: Optional[str] = Form(None),
+    account_number: Optional[str] = Form(None),
     user_id: int = Depends(require_subscription)
 ):
     """
@@ -315,6 +318,7 @@ async def upload_document(
     if remaining is not None and remaining <= 0:
         raise HTTPException(402, "Trial uploads exhausted - subscribe")
 
+    asserted = (account_number or "").strip() or None
     sha = sha256_bytes(data)
     VAULT_PATH.mkdir(parents=True, exist_ok=True)
     storage_key = VAULT_PATH / f"{sha}.pdf"
@@ -374,12 +378,33 @@ async def upload_document(
     if not storage_key.exists():
         storage_key.write_bytes(data)
         bytes_restored = True
+    if asserted:
+        brow = db.execute(
+            "SELECT id FROM accounts WHERE tenant_id=?"
+            " AND account_number=?",
+            (tenant_id, asserted)).fetchone()
+        if not brow:
+            from apps.worker.parsers.registry import get_active_template
+            db.execute(
+                "INSERT INTO accounts (id, tenant_id, code, name, type,"
+                " account_number, template) VALUES (?,?,?,?,?,?,?)",
+                (f"bank-{tenant_id}-{asserted}", tenant_id, "1000",
+                 f"Bank {asserted}", "asset", asserted,
+                 get_active_template(tenant_id)),
+            )
+            db.commit()
     doc_id = hashlib.sha256(f"{tenant_id}|{sha}".encode()).hexdigest()[:16]
-    cur = db.execute("SELECT id, status FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
+    cur = db.execute("SELECT id, status, asserted_account_number FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
     existing = cur.fetchone()
     if existing:
         ex_id = existing["id"] if isinstance(existing, dict) else existing[0]
         ex_status = existing["status"] if isinstance(existing, dict) else existing[1]
+        ex_asserted = existing["asserted_account_number"] if isinstance(existing, dict) else existing[2]
+        if asserted and not ex_asserted:
+            db.execute("UPDATE source_documents SET asserted_account_number=? WHERE id=?",
+                       (asserted, ex_id))
+            db.commit()
+            ex_asserted = asserted
         requeued = False
         if bytes_restored and ex_status != "queued":
             # Disk was wiped (redeploy) while the DB row survived: bytes
@@ -402,6 +427,7 @@ async def upload_document(
             "duplicate": True,
             "requeued": requeued,
             "bytes_restored": bytes_restored,
+            "asserted_account_number": ex_asserted,
             "is_encrypted": is_encrypted,
             "needs_password": pdf_needs_password,
             "tenant_id": tenant_id,
@@ -410,11 +436,11 @@ async def upload_document(
     # Append source_documents + audit_log hash-chain
     try:
         db.execute(
-            "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status)
+            "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status, asserted_account_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status, asserted)
         )
         # Audit log append with prev_hash/row_hash per AGENTS.md - never log password
-        audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method}
+        audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method, "asserted_account_number": asserted}
         append_audit_log(tenant_id, user_id, "document.upload", "source_documents", doc_id, audit_payload)
         db.commit()
     except Exception as e:
@@ -428,19 +454,41 @@ async def upload_document(
         "size_bytes": len(data),
         "status": status,
         "duplicate": False,
+        "asserted_account_number": asserted,
+        "account_match": "user-only" if asserted else "unattributed",
         "is_encrypted": is_encrypted,
         "needs_password": pdf_needs_password,
         "tenant_id": tenant_id,
         "trial_pages_remaining": get_trial_pages_remaining(user_id)
     }
 
+def _account_match(asserted, extracted) -> str:
+    """Attribution verdict: user claim vs extractor finding."""
+    a = (asserted or "").strip()
+    e = (extracted or "").strip()
+    if a and e:
+        return "match" if a == e else "mismatch"
+    if a:
+        return "user-only"
+    if e:
+        return "extracted-only"
+    return "unattributed"
+
+
 @app.get("/v1/documents")
 def list_documents(request: Request, user_id: int = Depends(require_login)):
     db = get_db()
     tenant_id = _tenant_of(user_id)
-    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc, account_id, account_number, bank_name, branch_code FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
+    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc, account_id, account_number, asserted_account_number, extracted_account_number, bank_name, branch_code FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
     rows = cur.fetchall()
-    return [dict(r) if not isinstance(r, dict) else r for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r) if not isinstance(r, dict) else r
+        d["account_match"] = _account_match(
+            d.get("asserted_account_number"),
+            d.get("extracted_account_number"))
+        out.append(d)
+    return out
 
 @app.get("/v1/transactions")
 def list_transactions(request: Request, status: Optional[str] = None, account_number: Optional[str] = None, document_id: Optional[str] = None, user_id: int = Depends(require_login)) -> List[TransactionOut]:
@@ -944,12 +992,15 @@ def create_report(kind: str = "excel", account_number: Optional[str] = None, req
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": csv_pack["file_key"], "sha256": csv_pack["sha256"], "count": csv_pack["count"]}
         if kind == "evidence-pack":
             from .reports import generate_evidence_pack
-            pack = generate_evidence_pack(tenant_id)
+            _require_account(tenant_id, account_number)
+            pack = generate_evidence_pack(tenant_id,
+                                          account_number=account_number)
             db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (pack["file_key"], pack["sha256"], report_id))
             db.commit()
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": pack["file_key"], "sha256": pack["sha256"], "file_count": pack["file_count"]}
         from .signing import build_and_sign
-        out = build_and_sign(tenant_id, None, None)
+        _require_account(tenant_id, account_number)
+        out = build_and_sign(tenant_id, None, None, account_number)
         db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (out["file_key"], out["sha256"], report_id))
         db.commit()
         return {"id": report_id, "kind": kind, "status": "ready", "file_key": out["file_key"], "sha256": out["sha256"]}
@@ -1003,7 +1054,9 @@ def images_segment(req: SegmentIn, user_id: int = Depends(require_login)):
         raise HTTPException(502, f"SAM service failed: {e}")
 
 @app.get("/v1/reports/evidence-pack")
-def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login)):
+def get_evidence_pack(sign: bool = False,
+                        account_number: Optional[str] = None,
+                        user_id: int = Depends(require_login)):
     """
     Evidence Pack ZIP per Appendix C/D: originals + reports + audit chain +
     manifest.json + manifest.sha256. Verify with scripts/verify_pack.py.
@@ -1012,7 +1065,9 @@ def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login))
     tenant_id = _tenant_of(user_id)
 
     from .reports import generate_evidence_pack
-    pack = generate_evidence_pack(tenant_id, sign=sign)
+    _require_account(tenant_id, account_number)
+    pack = generate_evidence_pack(tenant_id, sign=sign,
+                                  account_number=account_number)
     append_audit_log(tenant_id, user_id, "report.evidence_pack", "reports",
                      pack["report_id"],
                      {"sha256": pack["sha256"], "file_count": pack["file_count"],
@@ -1023,7 +1078,9 @@ def get_evidence_pack(sign: bool = False, user_id: int = Depends(require_login))
                         headers={"X-Report-Warning": _warn} if _warn else None)
 
 @app.get("/v1/reports/signed-pdf")
-def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
+def get_signed_pdf(from_date: str = None, to_date: str = None,
+                     account_number: Optional[str] = None,
+                     user_id: int = Depends(require_login)):
     """
     PAdES-signed summary PDF: built from DB, signed with configured cert,
     RFC3161-timestamped when a TSA is reachable (else explicit warning).
@@ -1034,7 +1091,9 @@ def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = De
 
     from .signing import build_and_sign
     try:
-        out = build_and_sign(tenant_id, from_date, to_date)
+        _require_account(tenant_id, account_number)
+        out = build_and_sign(tenant_id, from_date, to_date,
+                             account_number)
     except ValueError as e:
         raise HTTPException(422, str(e))
     append_audit_log(tenant_id, user_id, "report.signed_pdf", "reports",

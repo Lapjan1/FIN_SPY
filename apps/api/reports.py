@@ -209,8 +209,47 @@ Generated from the live database; verify counts against the app.
 """
 
 
-def build_popia_zip(tenant_id: str) -> str:
-    """POPIA subject-access export: every tenant-scoped row + originals.
+def _scope_clause(alias: str, account_number):
+    """(sql, params) restricting <.account_number> to the pack scope.
+
+    None = whole tenant (no clause); "__unknown" = unattributed rows.
+    """
+    col = f"{alias}.account_number" if alias else "account_number"
+    if not account_number:
+        return "", []
+    if account_number == "__unknown":
+        return f" AND ({col} IS NULL OR {col}='')", []
+    return f" AND {col}=?", [account_number]
+
+
+def _scoped_subqueries(account_number):
+    """Reusable (txn_sub, txn_params, doc_sub, doc_params) for pack scope."""
+    tcl, tpl = _scope_clause("", account_number)
+    txn_sub = "SELECT id FROM transactions WHERE tenant_id=?" + tcl
+    doc_sub = "SELECT id FROM source_documents WHERE tenant_id=?" + tcl
+    return txn_sub, tpl, doc_sub, tpl
+
+
+def _audit_scope_filter(account_number):
+    """(sql, params) keeping only audit rows touching in-scope objects."""
+    if not account_number:
+        return "", []
+    txn_sub, tpl, doc_sub, _ = _scoped_subqueries(account_number)
+    je_sub = ("SELECT id FROM journal_entries WHERE tenant_id=?"
+              f" AND transaction_id IN ({txn_sub})")
+    sql = (f" AND object_id IN ({doc_sub} UNION {txn_sub}"
+           f" UNION {je_sub})")
+    params = ["T", "T", "T", "T"]  # tenant placeholders, filled by caller
+    return sql, params
+
+
+def build_popia_zip(tenant_id: str, account_number=None) -> str:
+    """POPIA subject-access export: subscriber rows + scoped originals.
+
+    account_number scopes every account-linked table and original to
+    that bank account (None = whole tenant). tenants/users/profile,
+    subscriptions, and usage_events are subscriber-level and always
+    included; the manifest states the scope.
 
     Secrets are never included (password hashes, reset tokens, payment
     authorizations); global tables without a tenant key are excluded.
@@ -252,21 +291,80 @@ def build_popia_zip(tenant_id: str) -> str:
 "        paystack_customer_code, paystack_subscription_code, referred_by,"
 "        partner_demo, created_at FROM users WHERE tenant_id=?")
     dump_csv("users", users_sql, (tenant_id,))
-    for table in ("source_documents", "transactions", "classifications",
-                  "accounts", "journal_entries", "flags",
-                  "audit_log", "merchant_memory", "vendor_rules",
-                  "subscriptions", "usage_events"):
+    txn_sub, tpl, doc_sub, dpl = _scoped_subqueries(account_number)
+    je_sub = ("SELECT id FROM journal_entries WHERE tenant_id=?"
+              f" AND transaction_id IN ({txn_sub})")
+    s_clause, s_params = _scope_clause("", account_number)
+    if account_number == "__unknown":
+        bank_match, bank_params = "account_number IN ('','unknown')", []
+    elif account_number:
+        bank_match, bank_params = "account_number=?", [account_number]
+    else:
+        bank_match, bank_params = "1=1", []
+    a_clause, _a_markers = _audit_scope_filter(account_number)
+
+    def _audit_params():
+        # doc_sub(tenant+tpl) + txn_sub(tenant+tpl) + je outer tenant
+        # + inner txn_sub(tenant+tpl).
+        return (tenant_id, *tpl, tenant_id, *tpl,
+                tenant_id, tenant_id, *tpl)
+
+    for table in ("subscriptions", "usage_events"):
         dump_csv(table, f"SELECT * FROM {table} WHERE tenant_id=?",
                  (tenant_id,))
+    dump_csv("source_documents",
+             "SELECT * FROM source_documents WHERE tenant_id=?" + s_clause,
+             (tenant_id, *s_params))
+    dump_csv("transactions",
+             "SELECT * FROM transactions WHERE tenant_id=?" + s_clause,
+             (tenant_id, *s_params))
+    txn_gate = f" AND transaction_id IN ({txn_sub})" if account_number else ""
+    txn_gate_p = (tenant_id, *tpl) if account_number else ()
+    dump_csv("classifications",
+             "SELECT * FROM classifications WHERE tenant_id=?" + txn_gate,
+             (tenant_id, *txn_gate_p))
+    dump_csv("accounts",
+             "SELECT * FROM accounts WHERE tenant_id=?" + (
+                 " AND (id IN (SELECT account_id FROM journal_lines"
+                 " WHERE entry_id"
+                 f" IN ({je_sub})) OR {bank_match})"
+                 if account_number else ""),
+             ((tenant_id, tenant_id, tenant_id, *tpl, *bank_params)
+              if account_number else (tenant_id,)))
+    dump_csv("journal_entries",
+             "SELECT * FROM journal_entries WHERE tenant_id=?" + txn_gate,
+             (tenant_id, *txn_gate_p))
+    flag_gate = (" AND id IN (SELECT flag_id FROM flag_links"
+                 " WHERE transaction_id"
+                 f" IN ({txn_sub}))") if account_number else ""
+    dump_csv("flags",
+             "SELECT * FROM flags WHERE tenant_id=?" + flag_gate,
+             (tenant_id, *txn_gate_p))
+    dump_csv("audit_log",
+             "SELECT * FROM audit_log WHERE tenant_id=?" + a_clause,
+             (tenant_id, *_audit_params()) if account_number
+             else (tenant_id,))
+    dump_csv("merchant_memory",
+             "SELECT * FROM merchant_memory WHERE tenant_id=?" + s_clause,
+             (tenant_id, *s_params))
+    dump_csv("vendor_rules",
+             "SELECT * FROM vendor_rules WHERE tenant_id=?" + s_clause,
+             (tenant_id, *s_params))
     dump_csv("journal_lines",
              "SELECT l.* FROM journal_lines l JOIN journal_entries e"
-             " ON l.entry_id=e.id WHERE e.tenant_id=?", (tenant_id,))
+             " ON l.entry_id=e.id WHERE e.tenant_id=?"
+             + (f" AND e.transaction_id IN ({txn_sub})"
+                if account_number else ""),
+             (tenant_id, *txn_gate_p))
+    d_clause, d_params = _scope_clause("d", account_number)
     dump_csv("document_pages",
              "SELECT p.* FROM document_pages p JOIN source_documents d"
-             " ON p.document_id=d.id WHERE d.tenant_id=?", (tenant_id,))
+             " ON p.document_id=d.id WHERE d.tenant_id=?" + d_clause,
+             (tenant_id, *d_params))
     dump_csv("extraction_runs",
              "SELECT r.* FROM extraction_runs r JOIN source_documents d"
-             " ON r.document_id=d.id WHERE d.tenant_id=?", (tenant_id,))
+             " ON r.document_id=d.id WHERE d.tenant_id=?" + d_clause,
+             (tenant_id, *d_params))
 
     trow = db.execute("SELECT * FROM tenants WHERE id=?",
                       (tenant_id,)).fetchone()
@@ -282,8 +380,8 @@ def build_popia_zip(tenant_id: str) -> str:
     missing_originals = []
     docs = db.execute(
         "SELECT sha256, storage_key, original_filename"
-        " FROM source_documents WHERE tenant_id=?",
-        (tenant_id,)).fetchall()
+        " FROM source_documents WHERE tenant_id=?" + s_clause,
+        (tenant_id, *s_params)).fetchall()
     for d in docs:
         d = dict(d) if not isinstance(d, dict) else d
         src = Path(d["storage_key"]) if d.get("storage_key") \
@@ -305,6 +403,7 @@ def build_popia_zip(tenant_id: str) -> str:
                 hashlib.sha256(fp.read_bytes()).hexdigest()
     manifest = {
         "tenant_id": tenant_id,
+        "scope": {"account_number": account_number},
         "exported_at_utc": datetime.now(timezone.utc).isoformat(),
         "generator": "fin_spy popia v1",
         "tables": tables,
@@ -713,10 +812,13 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
 
 
 def generate_evidence_pack(tenant_id: str, report_id: str | None = None,
-                             sign: bool = False) -> Dict:
+                             sign: bool = False,
+                             account_number=None) -> Dict:
     """
     Evidence Pack ZIP per Appendix C/D: originals + reports + audit chain +
     manifest.json + manifest.sha256, all SHA256-pinned. Verifiable with
+    account_number scopes originals, derived reports, and audit rows;
+    the manifest states the scope (None = whole tenant).
     scripts/verify_pack.py (exit 0). TSA/PAdES placeholders stay null until
     Day-7 signing lands - never faked.
     """
@@ -742,9 +844,11 @@ def generate_evidence_pack(tenant_id: str, report_id: str | None = None,
         files.append(entry)
 
     # 1. originals from vault (role original, never modified)
+    _s_clause, _s_params = _scope_clause("", account_number)
     cur = db.execute(
         "SELECT id, sha256, original_filename, uploaded_by, uploaded_at_utc,"
-        " storage_key FROM source_documents WHERE tenant_id=?", (tenant_id,))
+        " storage_key FROM source_documents WHERE tenant_id=?" + _s_clause,
+        (tenant_id, *_s_params))
     for r in cur.fetchall():
         d = dict(r) if not isinstance(r, dict) else r
         src = Path(d["storage_key"]) if d.get("storage_key") else VAULT_PATH / f"{d['sha256']}.pdf"
@@ -756,46 +860,65 @@ def generate_evidence_pack(tenant_id: str, report_id: str | None = None,
                      uploaded_at_utc=str(d.get("uploaded_at_utc", "")))
 
     # 2. derived reports (role report)
-    pb = generate_powerbi_pack(tenant_id)
+    pb = generate_powerbi_pack(tenant_id, account_number)
     add_file(Path(pb["file_key"]), f"powerbi/{Path(pb['file_key']).name}",
              "report", derived_from="star-schema views")
     for ck in pb.get("csv_keys", []):
         add_file(Path(ck), f"powerbi/csvs/{Path(ck).name}",
                  "report", derived_from="star-schema views")
-    wb = generate_excel_workbook(tenant_id)
+    wb = generate_excel_workbook(tenant_id, None, None, account_number)
     add_file(Path(wb["file_key"]), Path(wb["file_key"]).name, "report",
              derived_from="transactions+journal")
-    ac = generate_auditor_csv(tenant_id)
+    ac = generate_auditor_csv(tenant_id, account_number)
     add_file(Path(ac["file_key"]), Path(ac["file_key"]).name, "report",
              derived_from="transactions+classifications")
 
     # 3. audit chain export (role audit)
+    _txn_sub, _tpl, _doc_sub, _dpl = _scoped_subqueries(account_number)
+    _je_sub = ("SELECT id FROM journal_entries WHERE tenant_id=?"
+               f" AND transaction_id IN ({_txn_sub})")
+    _a_clause = (f" AND object_id IN ({_doc_sub} UNION {_txn_sub}"
+                 f" UNION {_je_sub})") if account_number else ""
+    _a_params = ((tenant_id, *_tpl, tenant_id, *_tpl,
+                  tenant_id, tenant_id, *_tpl)
+                 if account_number else ())
     cur = db.execute(
         "SELECT id, actor_id, action, object_type, object_id, payload_json,"
         " prev_hash, row_hash, at_utc FROM audit_log WHERE tenant_id=?"
-        " ORDER BY id ASC", (tenant_id,))
+        + _a_clause + " ORDER BY id ASC", (tenant_id, *_a_params))
     audit_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     audit_path = stage / "audit.json"
     audit_path.write_text(json.dumps(audit_rows, indent=2, default=str))
     files.append({"path": "audit.json", "sha256": _sha256_file(audit_path), "role": "audit"})
 
     # 4. extraction runs (role extraction_raw)
+    _d_clause, _d_params = _scope_clause("d", account_number)
     cur = db.execute(
         "SELECT er.* FROM extraction_runs er JOIN source_documents d"
-        " ON er.document_id = d.id WHERE d.tenant_id=?", (tenant_id,))
+        " ON er.document_id = d.id WHERE d.tenant_id=?" + _d_clause,
+        (tenant_id, *_d_params))
     runs = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     runs_path = stage / "extraction_runs.json"
     runs_path.write_text(json.dumps(runs, indent=2, default=str))
     files.append({"path": "extraction_runs.json", "sha256": _sha256_file(runs_path),
                   "role": "extraction_raw"})
 
+    _head = db.execute("SELECT row_hash FROM audit_log WHERE tenant_id=?"
+                       " ORDER BY id DESC LIMIT 1", (tenant_id,)).fetchone()
+    _head_hash = (_head["row_hash"] if isinstance(_head, dict)
+                  else _head[0]) if _head else None
     manifest = {
         "manifest_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "tenant": tenant_id,
+        "scope": {"account_number": account_number},
+        "audit_full_head": _head_hash,
         "report_id": report_id,
         "software": {"git_commit": _git_commit(), "pipeline_version": "1.0.0"},
         "files": files,
+        "audit_note": ("audit.json is filtered to this account scope; "
+                        "chain continuity verifies against whole-tenant packs only."
+                        if account_number else None),
         "extraction_runs": [
             {"id": r.get("id"), "model_id": r.get("model_id"),
              "prompt_sha256": r.get("prompt_sha256"),

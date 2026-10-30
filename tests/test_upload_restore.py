@@ -20,7 +20,12 @@ def _pdf_bytes(tag):
 
     d = fitz.open()
     p = d.new_page()
-    p.insert_text((72, 72), f"restore probe {tag}")
+    p.insert_text((72, 72), "FNB Statement Account Number 62123456789")
+    p.insert_text((72, 92), "Opening Balance: R12 340.55")
+    p.insert_text((72, 112), f"25 Oct 2026 RESTORE PROBE {tag} R10.00 R12 330.55")
+    p.insert_text((72, 132), f"26 Oct 2026 RESTORE PROBE {tag} R10.00 R12 320.55")
+    p.insert_text((72, 152), f"27 Oct 2026 RESTORE PROBE {tag} R10.00 R12 310.55")
+    p.insert_text((72, 172), "Closing Balance: R12 310.55")
     return d.tobytes()
 
 

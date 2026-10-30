@@ -140,6 +140,16 @@ function ReportsInner({ uid, me }: { uid: string; me: Me }) {
         Every download respects the account picker: pick an account and the file contains only that
         account&apos;s rows and originals. &quot;All accounts&quot; exports the whole tenant.
       </p>
+      <p className="text-sm">
+        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200">
+          Scope: {account === '__unknown' ? 'Unknown account' : account || 'Whole tenant'}
+        </span>{' '}
+        {account ? (
+          <span className="text-xs text-slate-400">safe to share for this account only</span>
+        ) : (
+          <span className="text-xs text-amber-300">contains every account on this login - do not share if you hold accounts for others</span>
+        )}
+      </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
       {warning ? <p className="text-sm text-amber-300">Warning: {warning}</p> : null}
       <ul className="space-y-2">

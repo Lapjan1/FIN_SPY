@@ -12,7 +12,12 @@ def _pdf_bytes():
 
     d = fitz.open()
     p = d.new_page()
-    p.insert_text((72, 72), "dedup probe statement")
+    p.insert_text((72, 72), "FNB Statement Account Number 62123456789")
+    p.insert_text((72, 92), "Opening Balance: R12 340.55")
+    p.insert_text((72, 112), "25 Oct 2026 DEDUP PROBE R450.00 R11 890.55")
+    p.insert_text((72, 132), "26 Oct 2026 DEDUP PROBE R450.00 R11 440.55")
+    p.insert_text((72, 152), "27 Oct 2026 DEDUP PROBE R450.00 R10 990.55")
+    p.insert_text((72, 172), "Closing Balance: R10 990.55")
     return d.tobytes()
 
 

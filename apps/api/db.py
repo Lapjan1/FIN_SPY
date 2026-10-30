@@ -72,7 +72,8 @@ class DbHandle:
         # Regex: INSERT OR REPLACE INTO table (col1,col2) VALUES (?,?)
         # Most tables are first-col PK; composite keys are pinned here -
         # a wrong target is Postgres 42P10 InvalidColumnReference.
-        conflict_targets = {"transaction_sources": "(transaction_id, span_id)"}
+        conflict_targets = {"transaction_sources": "(transaction_id, span_id)",
+                                "flag_links": "(flag_id, transaction_id)"}
         def repl_or_replace(m):
             table = m.group(1)
             cols = m.group(2)
@@ -246,6 +247,8 @@ def init_db():
         account_number TEXT,
         asserted_account_number TEXT,
         extracted_account_number TEXT,
+        intake_verdict_json TEXT,
+        tamper_verdict_json TEXT,
         bank_name TEXT,
         branch_code TEXT,
         sha256 TEXT NOT NULL,
@@ -1268,6 +1271,8 @@ def _ensure_schema(db: DbHandle):
         ("source_documents", "account_number", "TEXT"),
         ("source_documents", "asserted_account_number", "TEXT"),
         ("source_documents", "extracted_account_number", "TEXT"),
+        ("source_documents", "intake_verdict_json", "TEXT"),
+        ("source_documents", "tamper_verdict_json", "TEXT"),
         ("source_documents", "bank_name", "TEXT"),
         ("source_documents", "branch_code", "TEXT"),
         ("transactions", "account_id", "TEXT"),

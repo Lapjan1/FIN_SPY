@@ -282,6 +282,58 @@ def ready():
         raise HTTPException(500, f"Not ready: {e}")
 
 # --- Documents with auth + trial + audit hash-chain + encrypted PDF handling ---
+
+
+def _intake_text_sample(filename: str, data: bytes,
+                        password_provided) -> str | None:
+    """First ~20k chars for the bank-statement gate. None when unreadable."""
+    low = (filename or "").lower()
+    if low.endswith((".csv", ".ofx", ".txt")):
+        return data[:20000].decode("utf-8", "ignore")
+    if not low.endswith(".pdf"):
+        return None
+    try:
+        import fitz
+        doc = fitz.open(stream=data, filetype="pdf")
+        if doc.is_encrypted and doc.needs_pass and not password_provided:
+            doc.close()
+            return None
+        if doc.is_encrypted and password_provided:
+            try:
+                doc.authenticate(password_provided)
+            except Exception:
+                pass
+        parts = []
+        for page in doc:
+            parts.append(page.get_text())
+            if sum(len(p) for p in parts) > 20000:
+                break
+        doc.close()
+        return "".join(parts)[:20000]
+    except Exception:
+        return None
+
+
+def _intake_verdict(filename: str, mime: str, sample: str | None) -> dict:
+    """Bank-statement gate verdict. Never raises on odd input."""
+    from apps.worker.parsers.classifier import (
+        classify_file_type, is_bank_statement,
+        should_exclude_from_extraction)
+    if sample is None:
+        return {"gated": False, "reason": "unreadable-or-encrypted",
+                "file_type": "other", "is_bank_statement": False,
+                "confidence": 0.0, "reasons": [], "needs_review": True}
+    is_bank, conf, reasons = is_bank_statement(sample, filename, mime)
+    file_type = classify_file_type(sample, filename, mime)
+    excluded, why = should_exclude_from_extraction(
+        sample, filename, mime, is_bank, conf)
+    return {"gated": True, "file_type": file_type,
+            "is_bank_statement": is_bank, "confidence": round(conf, 3),
+            "reasons": reasons[:8], "excluded": excluded,
+            "exclude_reason": why,
+            "needs_review": (not excluded) and (not is_bank)}
+
+
 @app.post("/v1/documents")
 async def upload_document(
     request: Request,
@@ -394,12 +446,17 @@ async def upload_document(
             )
             db.commit()
     doc_id = hashlib.sha256(f"{tenant_id}|{sha}".encode()).hexdigest()[:16]
-    cur = db.execute("SELECT id, status, asserted_account_number FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
+    cur = db.execute("SELECT id, status, asserted_account_number, intake_verdict_json FROM source_documents WHERE tenant_id=? AND sha256=?", (tenant_id, sha))
     existing = cur.fetchone()
     if existing:
         ex_id = existing["id"] if isinstance(existing, dict) else existing[0]
         ex_status = existing["status"] if isinstance(existing, dict) else existing[1]
         ex_asserted = existing["asserted_account_number"] if isinstance(existing, dict) else existing[2]
+        ex_verdict_raw = existing["intake_verdict_json"] if isinstance(existing, dict) else existing[3]
+        try:
+            ex_verdict = json.loads(ex_verdict_raw) if ex_verdict_raw else None
+        except Exception:
+            ex_verdict = None
         if asserted and not ex_asserted:
             db.execute("UPDATE source_documents SET asserted_account_number=? WHERE id=?",
                        (asserted, ex_id))
@@ -425,6 +482,7 @@ async def upload_document(
             "size_bytes": len(data),
             "status": ex_status,
             "duplicate": True,
+            "verification": ex_verdict,
             "requeued": requeued,
             "bytes_restored": bytes_restored,
             "asserted_account_number": ex_asserted,
@@ -433,11 +491,26 @@ async def upload_document(
             "tenant_id": tenant_id,
             "trial_pages_remaining": get_trial_pages_remaining(user_id)
         }
+    # Forensic gate: non-statements 422 here (no row, no quota).
+    # Duplicates returned above; password-locked files skip the gate.
+    sample = None
+    if status != "needs_password":
+        sample = _intake_text_sample(file.filename, data,
+                                     password_provided)
+    verdict = _intake_verdict(file.filename,
+                              file.content_type or "application/pdf",
+                              sample)
+    if verdict.get("excluded"):
+        raise HTTPException(
+            422, "Invalid parameters: not a bank statement"
+            f" (confidence {verdict['confidence']:.0%},"
+            f" {verdict['file_type']}). {verdict['exclude_reason']}")
+    verdict_json = json.dumps(verdict)
     # Append source_documents + audit_log hash-chain
     try:
         db.execute(
-            "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status, asserted_account_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status, asserted)
+            "INSERT INTO source_documents (id, tenant_id, sha256, size_bytes, mime, storage_key, original_filename, uploaded_by, upload_ip, user_agent, status, asserted_account_number, intake_verdict_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, tenant_id, sha, len(data), file.content_type or "application/pdf", str(storage_key), file.filename, user_id, request.client.host if request.client else "", request.headers.get("user-agent",""), status, asserted, verdict_json)
         )
         # Audit log append with prev_hash/row_hash per AGENTS.md - never log password
         audit_payload = {"sha256": sha, "filename": file.filename, "size": len(data), "is_encrypted": is_encrypted, "needs_password": pdf_needs_password, "encryption_method": encryption_method, "asserted_account_number": asserted}
@@ -454,6 +527,7 @@ async def upload_document(
         "size_bytes": len(data),
         "status": status,
         "duplicate": False,
+        "verification": verdict,
         "asserted_account_number": asserted,
         "account_match": "user-only" if asserted else "unattributed",
         "is_encrypted": is_encrypted,
@@ -479,7 +553,7 @@ def _account_match(asserted, extracted) -> str:
 def list_documents(request: Request, user_id: int = Depends(require_login)):
     db = get_db()
     tenant_id = _tenant_of(user_id)
-    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc, account_id, account_number, asserted_account_number, extracted_account_number, bank_name, branch_code FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
+    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc, account_id, account_number, asserted_account_number, extracted_account_number, intake_verdict_json, tamper_verdict_json, bank_name, branch_code FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
     rows = cur.fetchall()
     out = []
     for r in rows:
@@ -487,6 +561,20 @@ def list_documents(request: Request, user_id: int = Depends(require_login)):
         d["account_match"] = _account_match(
             d.get("asserted_account_number"),
             d.get("extracted_account_number"))
+        try:
+            d["verification"] = json.loads(
+                d.pop("intake_verdict_json") or "null")
+        except Exception:
+            d["verification"] = None
+        try:
+            full = json.loads(d.pop("tamper_verdict_json") or "null")
+        except Exception:
+            full = None
+        d["tamper"] = ({
+            "is_original_likely": full.get("is_original_likely"),
+            "tamper_chance": full.get("tamper_chance"),
+            "tamper_indicators": full.get("tamper_indicators", []),
+        } if isinstance(full, dict) else None)
         out.append(d)
     return out
 
@@ -593,6 +681,45 @@ def get_document_file(doc_id: str, user_id: int = Depends(require_login)):
     if not path.exists():
         raise HTTPException(404, "Vault file missing for document")
     return FileResponse(str(path), media_type="application/pdf", filename=fname or "document.pdf")
+
+@app.get("/v1/documents/{doc_id}/verification")
+def document_verification(doc_id: str,
+                          user_id: int = Depends(require_login)):
+    """Forensic dossier for one document: intake verdict, tamper verdict,
+    account attribution. Owner-only."""
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    cur = db.execute("SELECT * FROM source_documents WHERE id=?",
+                     (doc_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    doc = dict(row) if not isinstance(row, dict) else row
+    if doc.get("tenant_id") != tenant_id:
+        raise HTTPException(403, "Cross-tenant access denied"
+                                 " - isolation guard")
+
+    def _parse(raw):
+        try:
+            return json.loads(raw) if raw else None
+        except Exception:
+            return None
+
+    return {
+        "id": doc_id,
+        "status": doc.get("status"),
+        "original_filename": doc.get("original_filename"),
+        "sha256": doc.get("sha256"),
+        "verification": _parse(doc.get("intake_verdict_json")),
+        "tamper": _parse(doc.get("tamper_verdict_json")),
+        "account_match": _account_match(
+            doc.get("asserted_account_number"),
+            doc.get("extracted_account_number")),
+        "asserted_account_number": doc.get("asserted_account_number"),
+        "extracted_account_number": doc.get("extracted_account_number"),
+        "account_number": doc.get("account_number"),
+    }
+
 
 @app.post("/v1/documents/{doc_id}/requeue")
 def requeue_document(doc_id: str, user_id: int = Depends(require_login)):

@@ -524,6 +524,9 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
                 page.get("page_no", 1), page.get("width"), page.get("height"),
                 bbox, line.get("text", ""))
     from .base import fingerprint_txn
+    persisted = 0
+    skipped_existing = 0
+    skipped_ids: list = []
     for row in result.rows:
         txn_id = f"txn-{uuid.uuid4().hex[:8]}"
         fp = fingerprint_txn(row.date, row.amount_minor, row.description)
@@ -539,7 +542,14 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
         existing = cur.fetchone()
         if existing:
             # Duplicate transaction - skip per each transaction only once ever
-            # (spans are written after this check, so no orphans)
+            # (spans are written after this check, so no orphans).
+            # Counted, never silent: the worker flags + audits the total.
+            skipped_existing += 1
+            try:
+                _ex_id = existing["id"] if isinstance(existing, dict) else existing[0]
+            except Exception:
+                _ex_id = None
+            skipped_ids.append(_ex_id)
             continue
         db.execute(
             "INSERT OR REPLACE INTO transactions (id, tenant_id, account_id, account_number, document_id, run_id, txn_date, description_raw, amount_minor, currency, direction, balance_after_minor, fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -560,4 +570,7 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
                 "INSERT OR REPLACE INTO transaction_sources (transaction_id, span_id, role) VALUES (?,?,?)",
                 (txn_id, span_id, "amount")
             )
+        persisted += 1
     db.commit()
+    return {"persisted": persisted, "skipped_existing": skipped_existing,
+            "skipped_ids": skipped_ids}

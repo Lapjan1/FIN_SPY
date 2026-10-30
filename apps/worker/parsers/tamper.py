@@ -100,19 +100,29 @@ def check_content_hash_chain(sha256: str, tenant_id: str, db) -> Tuple[bool, Lis
     except Exception as e:
         reasons.append(f"Could not verify file on disk: {e}")
 
-    # Check audit_log chain integrity for this document
+    # Check audit rows for this document: each row_hash must recompute
+    # from its stored prev_hash + payload. (Continuity of the full tenant
+    # chain is verified separately; a per-doc slice cannot chain.)
     cur = db.execute("SELECT prev_hash, row_hash, payload_json FROM audit_log WHERE tenant_id=? AND object_type='source_documents' AND object_id=? ORDER BY id", (tenant_id, row["id"] if isinstance(row, dict) else row[0]))
     audit_rows = cur.fetchall()
     if audit_rows:
-        # Verify chain: each prev_hash should equal previous row_hash
-        prev_expected = "0"*64
+        from apps.api.db import compute_row_hash
+        import json as _json
+        bad = 0
         for audit_row in audit_rows:
             prev = audit_row["prev_hash"] if isinstance(audit_row, dict) else audit_row[0]
             row_hash = audit_row["row_hash"] if isinstance(audit_row, dict) else audit_row[1]
-            if prev != prev_expected:
-                return False, [f"Audit chain broken: expected prev {prev_expected[:12]}... got {prev[:12]}... - possible tampering"] + reasons
-            prev_expected = row_hash
-        reasons.append(f"Audit chain intact: {len(audit_rows)} entries, last hash {prev_expected[:12]}... - chain verified")
+            payload_raw = audit_row["payload_json"] if isinstance(audit_row, dict) else audit_row[2]
+            try:
+                canonical = _json.dumps(_json.loads(payload_raw or "{}"), sort_keys=True, separators=(",", ":"))
+                expect = compute_row_hash(prev, canonical)
+            except Exception:
+                expect = None
+            if expect != row_hash:
+                bad += 1
+        if bad:
+            return False, [f"Audit tamper: {bad}/{len(audit_rows)} entries for this doc fail hash recompute - payload or link modified"] + reasons
+        reasons.append(f"Audit intact: {len(audit_rows)} entries for this doc recompute clean - payloads unmodified")
 
     return True, reasons
 
@@ -165,8 +175,16 @@ def full_tamper_check(pdf_path: Path, sha256: str, tenant_id: str, db, pages: Li
     tamper_indicators = []
     original_checks = []
 
-    # 1. Metadata check
-    meta_original, meta_reasons = check_pdf_metadata_tampering(pdf_path)
+    # 1. Metadata check (PDF bodies only; vault names always end .pdf
+    # even for CSV bytes, so sniff content, never the suffix).
+    try:
+        is_pdf = pdf_path.read_bytes()[:5] == b"%PDF-"
+    except Exception:
+        is_pdf = False
+    if is_pdf:
+        meta_original, meta_reasons = check_pdf_metadata_tampering(pdf_path)
+    else:
+        meta_original, meta_reasons = True, ["Not a PDF body - metadata check skipped"]
     all_reasons.extend(meta_reasons)
     original_checks.append(meta_original)
     tamper_indicators.extend([r for r in meta_reasons if "Tamper indicator" in r])
@@ -177,9 +195,11 @@ def full_tamper_check(pdf_path: Path, sha256: str, tenant_id: str, db, pages: Li
     original_checks.append(hash_original)
     tamper_indicators.extend([r for r in hash_reasons if "Tamper detected" in r or "broken" in r])
 
-    # 3. Visual tampering if pages provided
+    # 3. Visual tampering if pages provided (text joined from lines).
     if pages:
-        visual_original, visual_reasons = check_visual_tampering_indicators(open(pdf_path, 'rb').read().decode(errors='ignore') if pdf_path.suffix != '.pdf' else "", pages)
+        joined = " ".join((line.get("text") or "") for page in pages
+                          for line in page.get("lines", []))
+        visual_original, visual_reasons = check_visual_tampering_indicators(joined, pages)
         all_reasons.extend(visual_reasons)
         original_checks.append(visual_original)
         tamper_indicators.extend([r for r in visual_reasons if "Tamper indicator" in r])

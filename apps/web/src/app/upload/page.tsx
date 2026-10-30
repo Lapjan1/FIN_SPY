@@ -15,6 +15,7 @@ type VaultReceipt = {
   bytes_restored?: boolean;
   trial_pages_remaining?: number;
   asserted_account_number?: string | null;
+  verification?: { is_bank_statement: boolean; confidence: number; needs_review: boolean } | null;
 };
 
 type Outcome = { name: string; ok: boolean; receipt?: VaultReceipt; error?: string };
@@ -145,6 +146,9 @@ function UploadInner({ uid, me }: { uid: string; me: Me }) {
                   <p className="font-mono text-xs text-slate-500">sha256:{o.receipt.sha256.slice(0, 16)}... - {(o.receipt.size_bytes / 1024).toFixed(1)} KB</p>
                   {o.receipt.asserted_account_number ? (
                     <p className="text-xs text-slate-400">Filed under account {o.receipt.asserted_account_number} (verified after extraction)</p>
+                  ) : null}
+                  {o.receipt.verification?.needs_review ? (
+                    <p className="text-xs text-amber-300">Needs review: low bank-statement confidence ({Math.round((o.receipt.verification.confidence || 0) * 100)}%) - check this file really is a statement</p>
                   ) : null}
                   {typeof o.receipt.trial_pages_remaining === 'number' ? (
                     <p className="text-xs text-slate-400">Trial uploads left: {o.receipt.trial_pages_remaining}</p>

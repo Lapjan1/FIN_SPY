@@ -90,6 +90,17 @@ export type DocInfo = {
   account_match?: string | null;
   bank_name?: string | null;
   branch_code?: string | null;
+  verification?: {
+    is_bank_statement: boolean;
+    confidence: number;
+    needs_review: boolean;
+    file_type: string;
+  } | null;
+  tamper?: {
+    is_original_likely: boolean | null;
+    tamper_chance: number | null;
+    tamper_indicators: string[];
+  } | null;
 };
 
 export type BankAccount = {

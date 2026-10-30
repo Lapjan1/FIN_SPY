@@ -127,3 +127,18 @@ def test_executescript_pg_strips_comment_percent(monkeypatch):
     assert "%" not in ran[0]
     assert "?" not in ran[0]
     assert "CREATE TABLE merchant_memory" in ran[0]
+
+
+def test_translate_or_replace_flag_links_composite():
+    # flag_links PRIMARY KEY (flag_id, transaction_id): first-col
+    # target (flag_id) is not unique -> 42P10 on Postgres.
+    out = _pg()._translate(
+        "INSERT OR REPLACE INTO flag_links"
+        " (flag_id, transaction_id) VALUES (?,?)"
+    )
+    assert out == (
+        "INSERT INTO flag_links (flag_id, transaction_id)"
+        " VALUES (%s,%s)"
+        " ON CONFLICT (flag_id, transaction_id) DO UPDATE"
+        " SET transaction_id=EXCLUDED.transaction_id"
+    )

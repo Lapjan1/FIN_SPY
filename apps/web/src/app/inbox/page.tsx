@@ -89,6 +89,16 @@ function InboxInner({ uid, me }: { uid: string; me: Me }) {
                   verified
                 </span>
               ) : null}
+              {d.verification?.needs_review ? (
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-900 text-amber-200 shrink-0" title="Low bank-statement confidence - check this file really is a statement">
+                  needs review
+                </span>
+              ) : null}
+              {d.tamper && d.tamper.is_original_likely === false ? (
+                <span className="text-xs px-2 py-0.5 rounded bg-red-900 text-red-200 shrink-0" title={(d.tamper.tamper_indicators || []).join('; ')}>
+                  tamper?
+                </span>
+              ) : null}
               <span className="font-mono text-xs text-slate-500">{d.sha256.slice(0, 12)}</span>
               <span className="text-xs">{d.status}</span>
               {d.status === 'exception' ? (

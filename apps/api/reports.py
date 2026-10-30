@@ -230,6 +230,25 @@ def _scoped_subqueries(account_number):
     return txn_sub, tpl, doc_sub, tpl
 
 
+def _pack_warnings(tenant_id: str) -> list:
+    """POPIA guardrail: flag tenants holding several accounts so a
+    whole-tenant ZIP is never shared unthinkingly."""
+    db = get_db()
+    cur = db.execute(
+        "SELECT COUNT(DISTINCT account_number) AS n"
+        " FROM source_documents WHERE tenant_id=?"
+        " AND account_number IS NOT NULL AND account_number NOT IN ('', 'unknown')",
+        (tenant_id,))
+    row = cur.fetchone()
+    n = row["n"] if isinstance(row, dict) else row[0]
+    if (n or 0) > 2:
+        return [f"This tenant holds {n} distinct bank accounts. One login"
+                " = one subscriber's finances: use per-account packs when"
+                " sharing (account picker), and never hand a whole-tenant"
+                " ZIP to another person."]
+    return []
+
+
 def _audit_scope_filter(account_number):
     """(sql, params) keeping only audit rows touching in-scope objects."""
     if not account_number:
@@ -406,6 +425,7 @@ def build_popia_zip(tenant_id: str, account_number=None) -> str:
         "scope": {"account_number": account_number},
         "exported_at_utc": datetime.now(timezone.utc).isoformat(),
         "generator": "fin_spy popia v1",
+        "warnings": _pack_warnings(tenant_id),
         "tables": tables,
         "originals": originals,
         "missing_originals": missing_originals,
@@ -913,6 +933,7 @@ def generate_evidence_pack(tenant_id: str, report_id: str | None = None,
         "tenant": tenant_id,
         "scope": {"account_number": account_number},
         "audit_full_head": _head_hash,
+        "warnings": _pack_warnings(tenant_id),
         "report_id": report_id,
         "software": {"git_commit": _git_commit(), "pipeline_version": "1.0.0"},
         "files": files,

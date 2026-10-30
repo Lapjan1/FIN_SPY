@@ -121,15 +121,19 @@ def is_duplicate_file(sha256: str, tenant_id: str, db) -> Tuple[bool, str]:
         return True, f"Duplicate of {doc_id} ({filename}) SHA256 {sha256[:12]}..."
     return False, ""
 
-def is_near_duplicate_transactions(new_fingerprints: List[str], tenant_id: str, db, threshold: float = 0.8) -> Tuple[bool, List[str]]:
+def is_near_duplicate_transactions(new_fingerprints: List[str], tenant_id: str, db, threshold: float = 0.8, account_number: str = None) -> Tuple[bool, List[str]]:
     """
     Near-duplicate via transaction fingerprints SHA256(date|amount|desc_norm)
     If >80% fingerprints overlap with existing transactions, likely duplicate file with different name
     """
     if not new_fingerprints:
         return False, []
-    # Get existing fingerprints for tenant
-    cur = db.execute("SELECT fingerprint_sha256 FROM transactions WHERE tenant_id=?", (tenant_id,))
+    # Get existing fingerprints for tenant (+ account when known:
+    # fingerprints are unique per tenant+account).
+    if account_number:
+        cur = db.execute("SELECT fingerprint_sha256 FROM transactions WHERE tenant_id=? AND account_number=?", (tenant_id, account_number))
+    else:
+        cur = db.execute("SELECT fingerprint_sha256 FROM transactions WHERE tenant_id=?", (tenant_id,))
     existing = set([r["fingerprint_sha256"] if isinstance(r, dict) else r[0] for r in cur.fetchall()])
     if not existing:
         return False, []

@@ -13,6 +13,8 @@ We collect information you provide when you register, upload bank statements (PD
 
 We do NOT store your raw PDFs as searchable text beyond the extracted word spans. Originals are preserved byte-for-byte in an immutable, content-addressed vault (keyed by SHA256 hash) and are never overwritten.
 
+One login holds one subscriber's finances: bank accounts, credit cards, garage cards, and family card numbers each keep their own books under their own account number, and every download (Excel, PowerBI, auditor CSV, evidence pack, signed PDF, POPIA export) can be scoped to a single account so a business pack never contains your other accounts. Whole-tenant exports exist for your own subject access and carry a multi-account warning in the manifest; do not share them with anyone else.
+
 ## 2. How We Use Your Information
 Your data is used solely to provide FIN_SPY service: forensic extraction with line-ID grounding, reconciliation gate, double-entry books, leak/subscription/duplicate spy, KPI peek (runway,burn,savings_rate), debt snowball/avalanche, signed PAdES PDF + Evidence Pack ZIP. We do not sell, rent, or share your data with third parties.
 

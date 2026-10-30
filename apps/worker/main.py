@@ -77,11 +77,144 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
         stage = "gate"
         print(f"worker: doc {doc_id} stage=gate pass={gate['overall_pass']}")
 
+        # Tamper verdict post-extract (has pages for the visual
+        # check). Verdict only - never fails the extraction.
+        stage = "tamper"
+        try:
+            from apps.worker.parsers.tamper import full_tamper_check
+            import json as _json
+            pages = getattr(result, "pages", None) or []
+            verdict = full_tamper_check(pdf_path, sha256, tenant_id,
+                                        db, pages)
+            db.execute("UPDATE source_documents SET tamper_verdict_json=?"
+                       " WHERE id=?",
+                       (_json.dumps(verdict, default=str), doc_id))
+            db.commit()
+            print(f"worker: doc {doc_id} stage=tamper"
+                  f" original={verdict.get('is_original_likely')}"
+                  f" chance={verdict.get('tamper_chance')}")
+        except Exception as e:
+            print(f"worker: doc {doc_id} stage=tamper"
+                  f" exc={type(e).__name__}")
+
+        # Overlap check pre-persist (known accounts only: unknown
+        # fingerprints are doc-scoped by construction, so they cannot
+        # overlap). Warn + flag + audit; still persist new rows.
+        stage = "overlap"
+        try:
+            from apps.worker.parsers.base import fingerprint_txn
+            from apps.worker.parsers.classifier import (
+                is_near_duplicate_transactions)
+            from apps.worker.spy.detectors import flag_id
+            import json as _json
+            _arow = db.execute(
+                "SELECT asserted_account_number FROM source_documents"
+                " WHERE id=?", (doc_id,)).fetchone()
+            _asserted = None
+            if _arow:
+                _ad = dict(_arow) if not isinstance(_arow, dict) else _arow
+                _asserted = (_ad.get("asserted_account_number") or "").strip() or None
+            _extracted = (result.statement or {}).get("account_number")
+            _effective = _asserted or _extracted
+            if _effective and result.rows:
+                _fps = [fingerprint_txn(r.date, r.amount_minor,
+                                        r.description)
+                        for r in result.rows]
+                _near, _why = is_near_duplicate_transactions(
+                    _fps, tenant_id, db, 0.8, _effective)
+                if _near:
+                    _orows = db.execute(
+                        "SELECT t.fingerprint_sha256, t.id, d.original_filename"
+                        " FROM transactions t LEFT JOIN source_documents d"
+                        " ON t.document_id=d.id"
+                        " WHERE t.tenant_id=? AND t.account_number=?",
+                        (tenant_id, _effective)).fetchall()
+                    _by_fp = {}
+                    for _o in _orows:
+                        _od = dict(_o) if not isinstance(_o, dict) else _o
+                        _by_fp.setdefault(
+                            _od.get("fingerprint_sha256"), []).append(_od)
+                    _hit_ids, _hit_docs = [], set()
+                    for _fp in set(_fps):
+                        for _m in _by_fp.get(_fp, []):
+                            _hit_ids.append(_m.get("id"))
+                            if _m.get("original_filename"):
+                                _hit_docs.add(_m["original_filename"])
+                    _fid = flag_id(tenant_id, "NDUP", doc_id)
+                    _w0 = min(r.date for r in result.rows)
+                    _w1 = max(r.date for r in result.rows)
+                    db.execute(
+                        "INSERT OR REPLACE INTO flags (id, tenant_id,"
+                        " test_id, params_json, severity, window_start,"
+                        " window_end, result_json, code_version)"
+                        " VALUES (?,?,?,?,?,?,?,?,?)",
+                        (_fid, tenant_id, "NDUP",
+                         _json.dumps({"document_id": doc_id}),
+                         "medium", _w0, _w1,
+                         _json.dumps({"overlap": len(set(_fps) & set(_by_fp)),
+                                      "of_rows": len(_fps),
+                                      "overlaps": ", ".join(sorted(_hit_docs)),
+                                      "account_number": _effective}),
+                         "intake-v1"))
+                    for _tid in _hit_ids[:500]:
+                        if _tid:
+                            db.execute(
+                                "INSERT OR REPLACE INTO flag_links"
+                                " (flag_id, transaction_id) VALUES (?,?)",
+                                (_fid, _tid))
+                    db.commit()
+                    _msg = (f"{len(set(_fps) & set(_by_fp))} of {len(_fps)}"
+                            f" rows overlap {', '.join(sorted(_hit_docs)) or 'prior rows'}"
+                            f" (account {_effective}) - new rows kept")
+                    warnings.append(_msg)
+                    append_audit_log(tenant_id, uploaded_by,
+                                     "persist.overlap", "extraction_runs",
+                                     run_id, {"document_id": doc_id,
+                                              "overlap": len(set(_fps) & set(_by_fp)),
+                                              "of_rows": len(_fps)})
+                    print(f"worker: doc {doc_id} stage=overlap near-dup flagged")
+        except Exception as e:
+            print(f"worker: doc {doc_id} stage=overlap"
+                  f" exc={type(e).__name__}")
+
         # Persist to DB per DB-first
         # For MVP, create source_spans, transactions via persist_to_db
         stage = "persist"
-        persist_to_db(result, doc_id, tenant_id, run_id)
-        print(f"worker: doc {doc_id} stage=persist done")
+        _counts = persist_to_db(result, doc_id, tenant_id, run_id) or {}
+        print(f"worker: doc {doc_id} stage=persist done"
+              f" persisted={_counts.get('persisted', '?')}"
+              f" skipped={_counts.get('skipped_existing', '?')}")
+        if (_counts.get("skipped_existing") or 0) > 0:
+            try:
+                from apps.worker.spy.detectors import flag_id as _fid2
+                import json as _json2
+                _n = _counts["skipped_existing"]
+                _sid = _fid2(tenant_id, "DUP-SKIP", doc_id)
+                db.execute(
+                    "INSERT OR REPLACE INTO flags (id, tenant_id, test_id,"
+                    " params_json, severity, window_start, window_end,"
+                    " result_json, code_version)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (_sid, tenant_id, "DUP-SKIP",
+                     _json2.dumps({"document_id": doc_id}), "info",
+                     None, None,
+                     _json2.dumps({"skipped": _n, "document_id": doc_id}),
+                     "intake-v1"))
+                for _tid in (_counts.get("skipped_ids") or [])[:500]:
+                    if _tid:
+                        db.execute(
+                            "INSERT OR REPLACE INTO flag_links"
+                            " (flag_id, transaction_id) VALUES (?,?)",
+                            (_sid, _tid))
+                db.commit()
+                warnings.append(f"{_n} rows already on file - skipped,"
+                                " nothing duplicated")
+                append_audit_log(tenant_id, uploaded_by, "persist.skip",
+                                 "extraction_runs", run_id,
+                                 {"document_id": doc_id, "skipped": _n})
+            except Exception as e:
+                print(f"worker: doc {doc_id} stage=persist"
+                      f" skip-flag exc={type(e).__name__}")
 
         stage = "finalize"
         # Update extraction_runs

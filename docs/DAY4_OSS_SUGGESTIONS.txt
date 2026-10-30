@@ -1,0 +1,29 @@
+FIN_SPY Day 4 - Open-Source Cloud Extraction  DB Patterns Research (2026-10-29)
+
+Similar projects audited:
+1. paperless-ngx github.com/paperless-ngx/paperless-ngx - pypdfium2+ocrmypdf+Tesseract, django-q2+Redis inotify, SQLite/Postgres dual checksum SHA256 dup, hOCR bbox sidecar, Correspondent per-user learning
+2. docling DS4SD/docling - docling-parse MIT Rust + DocLayNet layout, prov bbox(l,t,r,b), library no queue, MIT - BEST PyMuPDF escape
+3. marker/surya VikParuchuri/marker - surya-det/rec/layout polygon bboxes, heavy GPU Celery conc=1, GPL-3.0 not Railway
+4. MinerU opendatalab/MinerU - doclayout_yolo+PaddleOCR+rapid_table, stage cache .cache/{sha}_*.json, AGPL-3.0 reference only
+5. unstructured-io Unstructured-IO/unstructured - fast/hi_res, coordinates.points normalized 0-1000 PixelSpace, element_id=hash, Apache-2.0 safe
+6. invoice2data invoice2data/invoice2data - YAML templates keywords/fields{regex} 300+, closest to config/banks.yaml registry, MIT
+7. PaddleOCR PP-Structure - det/rec+SLANet table+VI-LayoutXLM KIE linking, Apache-2.0
+8. beancount beancount/beancount+smart_importer - pdfplumber/camelot regex, training_data payee->account Bayes, append-only .beancount ledger, imported_id=fingerprint dedup, GPL-2.0/MIT
+9. firefly-iii importers - GoCardless/Plaid+CAMT.053, Laravel Queue Redis import_jobs per-user leaky bucket fairness, user_id FK every table transaction_hash=SHA256, AGPL-3.0
+10. ocrmypdf - Ghostscript+Tesseract searchable PDF/A hOCR bbox, skip if text layer, MPL-2.0 SaaS friendly
+11. actualbudget - SimpleFIN rules DSL contains/is->set category/payee, CRDT lotus, SQLite per-file imported_id unique per account payees learned uses_count, MIT
+
+Lessons for FIN_SPY (DB-first apps/api/db.py:214 source_documents UNIQUE(tenant,sha) vault data/vault/<sha>.pdf apps/api/main.py:306):
+- Abstraction: extract_pages() interface apps/worker/parsers/extractor.py:14 returning Pages{lines{bbox,text_hash}} normalized 0-1000 like unstructured/docling survives DPI. Keep backends pluggable pypdfium2 BSD + pdfplumber MIT primary, PyMuPDF AGPL only hackathon.
+- Stage cache by SHA: vault + extraction_runs keyed (sha,pipeline_version,model_id) like MinerU/docling saves $71.84 credits freellmapi muse-spark-1.1 http://127.0.0.1:3001/v1 dev + meta_official muse-spark-1.3 https://api.llama.com/compat/v1 golden only per config/models.yaml:10.
+- Idempotency: paperless checksum + firefly transaction_hash + actual imported_id = FIN_SPY fingerprint SHA256(date|amount|desc_norm) base.py:90 UNIQUE(tenant,account_number,fingerprint) db.py:311. Fix account_number or "" collision trap extractor.py:508 -> must require known account_number.
+- Merchant memory: beancount smart_importer + paperless Correspondent + actual payees uses_count per tenant only never global. FIN_SPY merchant_memory vendor_rules UNIQUE(tenant,normalized_merchant,account_number) vendor.py:12 normalize_merchant + create_vendor_rule validates target exists raises Invalid parameters. Learn only on accept with reason main.py:1634 review-queue.
+- Per-account ledger: firefly accounts.account_number UNIQUE(user_id,account_number) = db.py:364 UNIQUE(tenant_id,account_number) + ensure_coa_seeded sentinel code='9999' AND account_number IS NULL registry.py:129. Test no contamination test_account_isolation.py.
+- Queue fairness: Laravel leaky bucket = worker/main.py:163 polling ORDER BY uploaded_at ASC LIMIT 5 per-tenant. Add FOR UPDATE SKIP LOCKED + LISTEN/NOTIFY for Postgres prod.
+- Requeue trap: paperless reprocess + main.py:514 POST /v1/documents/{id}/requeue because global vault + per-tenant UNIQUE returns duplicate:true blocks retry learning 54.
+- Audit hash-chain stronger than OSS: compute_row_hash(prev||canonical_json) db.py:1267 + tamper full_tamper_check tamper.py:158.
+- OCR path: ocrmypdf pre-process when words==0 for jpg/png main.py:294 allowed but extractor.py:370 ValueError OCR not wired.
+
+License: AGPL PyMuPDF/MinerU/Firefly must open source service if linked SaaS. MIT safe: docling, invoice2data, unstructured Apache-2.0. GPL-3.0 paperless/marker file-level risk. Keep PyMuPDF behind abstraction.
+
+Adopt now: bbox normalized 0-1000, SHA stage cache, fix FK cleanup order cleanup_tenant db.py:1146, validate vendor 422 Invalid parameters, RLS policies Postgres not just app guard.

@@ -337,3 +337,21 @@ Symptom: user stuck on already in your vault with zero extraction after several 
 Cause: (1) VAULT_PATH defaulted to ./data/vault (ephemeral /app/data/vault) while the Railway volume sat empty at /data/vault (0MB used) - every deploy wiped bytes but DB rows survived. (2) Duplicate re-upload restored bytes but kept the old status, so the worker never re-ran.
 Fix: VAULT_PATH=/data/vault env on FIN_SPY (volume now in use) + duplicate-with-restored-bytes resets to queued with requeued:true (tests/test_upload_restore.py 2). Receipt UI shows restored state. User re-uploads once to heal.
 Applies when: any content-addressed store - assert at boot that the store path is on persistent disk, and make dedup verify bytes exist, not just the row.
+
+## 2026-10-30-58 Picker counts must come from the filter's source of truth
+Symptom: live bank-accounts offered "unknown (93)" but selecting it filtered to 0 rows - extractor writes account_number="unknown" on the accounts row but "" on transactions.
+Cause: picker listed accounts-table labels while every filter matched transactions.account_number. Two sources of truth for one concept.
+Fix: bank-accounts excludes the placeholder and synthesizes the unknown row from transaction counts (bbbe977); pinned by test_bank_accounts_synthesizes_unknown_row, red-verified via stash.
+Applies when: any faceted picker - count from the same table + predicate the filter uses, or the counts lie.
+
+## 2026-10-30-59 Single-quoted Python strings eat SQL '' literals in splices
+Symptom: sqlite3.OperationalError near ")" on the __unknown excel path; file showed t.account_number=) with the '' gone.
+Cause: splice replacement written as '...account_number='')' - the '' closed the Python string early and adjacent-literal concatenation silently dropped the quotes.
+Fix: double-quoted Python strings for any replacement containing SQL literals; fixed in .fin_spy_tmp/fix_uf.py, audited all 9 unknown clauses by grep.
+Applies when: generating code with nested quoting - prefer the quote style that never collides, and grep the output for the literal you meant to write.
+
+## 2026-10-30-60 Every branch of a conditional query needs its own param tuple
+Symptom: sqlite3.ProgrammingError 2 placeholders vs 3 bindings on powerbi __unknown - the _fj/_dd unknown branches added no ? but the execute still passed account_number.
+Cause: query-string splice updated but the param tuple two lines below kept the old shape; known-account tests passed because that branch was consistent.
+Fix: _unk-aware param tuples + tests/test_unknown_scope_reports.py covering unknown on trial/dashboard/auditor/powerbi, not just transactions.
+Applies when: any query built by string branches - test every branch, because the green branch proves nothing about its siblings.

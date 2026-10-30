@@ -12,12 +12,12 @@ account+doc columns and filters, one global picker drives the app.
 - Picker includes "Unknown account" for the `""` scope.
 
 ## Steps
-1. Vendor auto-book: classification (source=rule) + confirmed + audit.
-2. `POST /v1/transactions/{id}/move` + "Move to" buttons.
-3. `GET /v1/bank-accounts`; doc/account columns + filters; reports
+1. [x] Vendor auto-book: classification (source=rule) + confirmed + audit.
+2. [x] `POST /v1/transactions/{id}/move` + "Move to" buttons.
+3. [x] `GET /v1/bank-accounts`; doc/account columns + filters; reports
    `account_number` passthrough; global `AccountSelector`.
-4. Excel classification columns + 9999 method note.
-5. Full re-verify + deploy + audit.
+4. [x] Excel classification columns + 9999 method note.
+5. [x] Full re-verify + deploy + audit.
 
 ## Evidence
 - Step 1 `tests/test_vendor_auto_book_classifies.py` 2 passed:

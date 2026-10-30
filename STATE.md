@@ -1,6 +1,8 @@
-# STATE (updated 2026-10-28 - Day8 DONE 178 passed, see docs/RECAP_DAY8.md + docs/TIMELINE.md)
+# STATE (updated 2026-10-30 - Account channel DONE 292 passed, see docs/tasks/FIX-account-channel.md)
 
 ## Working - Evidence with date
+- **ACCOUNT CHANNEL LIVE 2026-10-30:** every function per bank account (71bba5e + bbbe977 + 84fcc25 + pie 74e36fb). Vendor auto-book writes rule-sourced classification + confirmed + audit (no more posted-but-unclassified orphans); POST /v1/transactions/{id}/move re-decodes confirmed rows out of 9999; GET /v1/bank-accounts + transactions/document filters + excel/auditor/powerbi account_number passthrough (422 on unknown) + __unknown sentinel on transactions/trial/dashboard/reports; global AccountSelector drives Transactions/Books/Reports/Dashboard with localStorage; Inbox badges; Excel Transactions sheet gains account/document/nature/category/rationale/status + 9999 method note; dashboard vendor treemap -> pie. 292 passed (17 new, red-first), tsc 0. LIVE API c9578c4c + web 883bcca9: 2 CSVs -> 93 txns, picker/filter/dashboard agree 93, accept->9999->Move->6030 je-55877673, workbook shows moved row confirmed/6030. Learnings 58-60.
+
 
 - **8.5 CLOSES LIVE 2026-10-30:** DSN redaction + DEV_AUTH gate + trigger-skip + README pitch/disclosure + email claim cut + privacy parity (f51ad5d). 275 passed, tsc 0, 44/44 re-audit on API 19965f33 + web 227b7516, logs show redacted DSN + one demo-auth WARN + zero pg WARN. Audit bumped 8.5, video excluded per owner.
 

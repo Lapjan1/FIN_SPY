@@ -12,7 +12,7 @@ failures fail loudly; zero-row extractions mark exception.
    path uses it; generic/deterministic fire on regrouped rows.
 2. [x] 401/403 -> ModelAuthError; worker marks exception with clear
    message; zero rows -> exception, never proposed.
-3. [ ] Full suite + commit + deploy + live re-extract of synthetic
+3. [x] Full suite + commit + deploy + live re-extract of synthetic
    column-major PDF (no PII in proof).
 
 ## Evidence
@@ -43,3 +43,28 @@ failures fail loudly; zero-row extractions mark exception.
   capture manually` and land `exception`, never `proposed`.
 - Gates: `python -m pytest tests -q -p no:cacheprovider` 330 passed;
   `pnpm --dir apps/web exec tsc --noEmit` exit 0.
+- Step 3 live (API 22efb244 + web 37704034): column-emitted probe
+  `data/samples/fnb_column_shape.pdf` (synthetic, no PII) uploads
+  gate True conf 1.0, extracts 6/6 rows with exact amounts/balances/
+  directions, status `proposed`, account 62345678901/FNB/250655
+  auto-attributed. Sources endpoint returns L010 + bbox
+  [40,266,474,281] + doc sha256 per row - full number-to-source
+  proof chain live.
+- Step 3 live-caught defects (both red/green fixed, deployed):
+  (a) FNB parsed the `Statement Period : ...` line as a txn (R31/
+  R2023 garbage -> exception); all 3 bank parsers now skip
+  `Statement Period|Date` framing (79d3bb2, 3 tests).
+  (b) FNB desc-strip fused descriptions (`SHOP A` -> `SHOPF100.00-`)
+  because the loose amount regex matches inter-word spaces and
+  `replace(' ','')` stripped everything; digitless matches now
+  filtered (5e8d3ad, 2 tests; STDB immune by construction, ABSA
+  already filtered).
+- Bank-gate test rewritten to its true contract: it passed only via
+  the whitespace parse crash (FNB dates DO match DD/MM/YYYY); now
+  pins right-parser-right-values on valid rows + fall-through on
+  unparseable lines. Learning 66.
+- Open findings (next todos, not this fix): FNB yearless dates
+  default to current year (generic engine uses Period year
+  correctly); ABSA bare `AMT BAL` pairs fuse in its tokenizer
+  (paren shape works); one full-suite order-flake seen
+  (trial-422 test failed once, green on re-run + in isolation).

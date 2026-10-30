@@ -1,6 +1,8 @@
 # STATE (updated 2026-10-30 - Intake forensic DONE 311 passed, see docs/tasks/FIX-intake-forensic.md)
 
 ## Working - Evidence with date
+- **CSV SNIFF FIX (9c755e8, 315 green):** _looks_csv skips ragged preamble/trailer lines before the uniformity check (same 2+/3+ bar), so titled bank CSVs parse instead of falling to splitlines (0 rows). 4 red-first tests; live API 91c232ff: titled CSV gate True, 5 txns (was 0). Learning 63.
+
 - **HELP REFRESH (29aaf2f, 1 file, +21/-7):** /help covers Books/Debt/Reports + void flow + owner settings + CSV/OFX (verified by grep on HEAD: Books 3, Debt 2, Reports 2, Void 2, CSV 2, OFX 1, settings 1). Audited 2026-10-30 during HEAD documentation check; no separate task doc (single-page copy).
 
 - **INTAKE FORENSIC LIVE 2026-10-30:** statement gate at upload (non-statements 422 with verdict, no row/quota; gray flagged needs_review), tamper wired in worker with stored verdict + verification endpoint + inbox badges, overlap honest (NDUP flag naming the overlapped file + DUP-SKIP counts + audit, new rows kept), pack multi-account manifest warnings + scope-labeled downloads + privacy copy (5bd1e49 + e5dfea2 CSV-None fix). 311 passed (12 new red-first), tsc 0. LIVE API e8a5a6bc + web a69b9db0: invoice 422 live, overlap NDUP 5-of-6 + DUP-SKIP 5, tamper verdict stored. Learnings 61-62.

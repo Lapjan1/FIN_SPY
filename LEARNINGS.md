@@ -367,3 +367,9 @@ Symptom: every CSV tamper verdict missing live; worker log showed stage=tamper e
 Cause: text-reader pages store width/height as None, so page.get('width', 1000) returns None (the key exists) and None + 10 raises. Tests only ran tamper on PDFs (dims set). Class-only log line cost a full debug cycle.
 Fix: `or`-defaults for dims/bbox (e5dfea2), CSV tamper test pinned, metadata-stage logs include truncated messages (metadata errors carry no row values).
 Applies when: any .get() default over nullable columns/pages - use `or` when None is a live value; and log messages on metadata stages where PII cannot appear.
+
+## 2026-10-30-63 Content sniffs must skip framing lines, not just blank ones
+Symptom: titled bank CSVs extracted 0 rows; the title row broke the uniformity check so bytes fell to the splitlines path where raw commas fused amounts.
+Cause: _looks_csv required the FIRST rows uniform; real exports frame the table with title/balance lines.
+Fix: skip leading <3-cell rows, then require the uniform run to hold (same 2+/3+ bar); prose still rejected, TXT-amount guard intact (9c755e8, tests/test_csv_sniff.py 4).
+Applies when: any format sniff - frame lines are data about the file, not rows of the table; skip them before judging shape.

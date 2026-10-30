@@ -106,11 +106,13 @@ TEXT_SUFFIXES = {".csv", ".txt", ".ofx", ".qif"}
 
 
 def _looks_csv(raw: str) -> bool:
-    """Content sniff for CSV: 2+ lines sharing a 3+ cell count.
+    """Content sniff for CSV: 2+ uniform lines sharing a 3+ cell count.
 
     Suffixes lie (vault keys always end .pdf), and blind csv-parsing
     would shred space-separated TXT amounts - so only consistent
-    multi-cell content takes the CSV path.
+    multi-cell content takes the CSV path. Ragged preamble lines
+    (titles, balances) are skipped: the uniform run must start at the
+    first tabular row and hold, the same bar as before.
     """
     import csv as _csv
     import io as _io
@@ -119,10 +121,16 @@ def _looks_csv(raw: str) -> bool:
         if not row or not any(c.strip() for c in row):
             continue
         counts.append(len(row))
-        if len(counts) >= 5:
+    start = 0
+    while start < len(counts) and counts[start] < 3:
+        start += 1
+    run = []
+    for count in counts[start:start + 5]:
+        if count != counts[start]:
             break
-    return (len(counts) >= 2 and counts[0] >= 3
-            and all(c == counts[0] for c in counts))
+        run.append(count)
+    return (len(run) >= 2 and run[0] >= 3
+            and all(c == run[0] for c in run))
 
 def extract_text_lines(text_path: Path) -> List[Dict]:
     """Text-reader twin of extract_text_with_bbox for CSV/TXT/OFX uploads.

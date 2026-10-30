@@ -44,7 +44,8 @@ failures fail loudly; zero-row extractions mark exception.
 - Gates: `python -m pytest tests -q -p no:cacheprovider` 330 passed;
   `pnpm --dir apps/web exec tsc --noEmit` exit 0.
 - Step 3 live (API 22efb244 + web 37704034): column-emitted probe
-  `data/samples/fnb_column_shape.pdf` (synthetic, no PII) uploads
+  (synthetic, no PII; regenerate via `scripts/make_column_probe.py`
+  - `data/samples/*.pdf` stays gitignored by policy) uploads
   gate True conf 1.0, extracts 6/6 rows with exact amounts/balances/
   directions, status `proposed`, account 62345678901/FNB/250655
   auto-attributed. Sources endpoint returns L010 + bbox

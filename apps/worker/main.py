@@ -150,7 +150,8 @@ def worker_loop(poll_interval: int = 5, max_iterations: int = None):
     print("FIN_SPY worker starting...")
     init_db()
     print(f"Vault: {VAULT_PATH}")
-    print(f"DB: {os.getenv('DATABASE_URL', 'sqlite:///./data/fin_spy.db')}")
+    from apps.api.db import redact_url
+    print(f"DB: {redact_url(os.getenv('DATABASE_URL', 'sqlite:///./data/fin_spy.db'))}")
     print(f"Meta base: {os.getenv('FREELLMAPI_BASE_URL', 'http://127.0.0.1:3001/v1')}")
     print(f"Queue: polling every {poll_interval}s, rate limit {RATE_LIMIT_RPM} RPM, interval {REQUEST_INTERVAL}s")
     print("Forensic pipeline: intake->hash->text+bbox->deterministic->LLM fallback line-ID grounding->validate->persist")

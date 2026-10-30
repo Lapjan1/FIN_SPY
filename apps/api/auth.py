@@ -45,24 +45,49 @@ from .db import get_db, append_audit_log, get_setting, env_or_setting
 
 security = HTTPBearer(auto_error=False)
 
+_DEV_AUTH_WARNED = False
+
+
+def _dev_auth_enabled() -> bool:
+    """Demo-auth gate. DEV_AUTH_ENABLED=false disables numeric Bearer,
+    X-User-Id and user_id query (all 401). Default on for the hackathon
+    demo + suite; real prod must use JWT (see README disclosure).
+    """
+    return os.getenv("DEV_AUTH_ENABLED", "true").lower() != "false"
+
+
+def _warn_dev_auth_once():
+    global _DEV_AUTH_WARNED
+    if not _DEV_AUTH_WARNED:
+        _DEV_AUTH_WARNED = True
+        print(
+            "WARN: demo auth in use (numeric id, no signature) -"
+            " set DEV_AUTH_ENABLED=false with JWT for real prod"
+        )
+
 def get_current_user_id(request: Request) -> Optional[int]:
     # Try Bearer token first, then session cookie, then X-User-Id header for dev
     # For MVP, support header X-User-Id for local testing without full JWT
     # Real prod should use JWT from BetterAuth or session table
+    if not _dev_auth_enabled():
+        return None
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         # In prod, verify JWT here - for MVP, treat token as user_id if numeric, or lookup reset_tokens
         # Simplified: if token is numeric, use as user_id (dev only)
         if token.isdigit():
+            _warn_dev_auth_once()
             return int(token)
     # Check X-User-Id for local dev
     uid_hdr = request.headers.get("X-User-Id")
     if uid_hdr and uid_hdr.isdigit():
+        _warn_dev_auth_once()
         return int(uid_hdr)
     # Check query param for local dev
     uid_q = request.query_params.get("user_id")
     if uid_q and uid_q.isdigit():
+        _warn_dev_auth_once()
         return int(uid_q)
     return None
 

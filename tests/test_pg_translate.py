@@ -83,6 +83,34 @@ def test_executescript_pg_skips_triggers(monkeypatch):
     assert "CREATE TABLE t" in joined
 
 
+def test_executescript_pg_skips_trigger_bodies(monkeypatch):
+    # The `;`-splitter chops multi-statement trigger bodies; continuation
+    # chunks (no TRIGGER keyword) used to execute and WARN loudly at every
+    # boot. Whole CREATE..END blocks must be skipped on pg.
+    ran = []
+    db = _pg()
+    monkeypatch.setattr(db, "execute", lambda sql, params=(): ran.append(sql))
+    db.executescript(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\n"
+        "CREATE TRIGGER trg AFTER INSERT ON t\n"
+        "BEGIN\n"
+        "    SELECT CASE WHEN 1 != 1\n"
+        "    THEN RAISE(ABORT, 'first');\n"
+        "    END;\n"
+        "    SELECT CASE WHEN 2 != 2\n"
+        "    THEN RAISE(ABORT, 'second');\n"
+        "    END;\n"
+        "END;\n"
+        "CREATE TABLE u (id INTEGER PRIMARY KEY);\n"
+    )
+    joined = "\n".join(ran)
+    assert "TRIGGER" not in joined
+    assert "RAISE" not in joined
+    assert "SELECT CASE" not in joined
+    assert "CREATE TABLE t" in joined
+    assert "CREATE TABLE u" in joined
+
+
 def test_executescript_pg_strips_comment_percent(monkeypatch):
     # Live prod bug: a `--` schema comment containing `%` (merchant_memory
     # header: "% allocation") reached psycopg2, which raised "tuple index

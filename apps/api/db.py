@@ -24,6 +24,17 @@ from datetime import datetime, timezone
 DB_PATH = Path(os.getenv("VAULT_PATH", "./data")).parent / "fin_spy.db"  # ./data/fin_spy.db per AGENTS.md
 DB_PATH = Path(os.getenv("DATABASE_PATH", "./data/fin_spy.db"))
 
+def redact_url(text):
+    """Mask credentials in DSNs/URLs inside log-bound strings.
+
+    postgres://user:pass@host/db -> postgres://***@host/db.
+    Non-URL text passes through; None-safe. Use on every value that
+    can reach logs when it might embed a secret (boot prints, WARNs)."""
+    if text is None:
+        return None
+    s = str(text)
+    return re.sub(r"(postgres(?:ql)?://)[^@\s]+@", r"\1***@", s)
+
 def is_postgres() -> bool:
     url = os.getenv("DATABASE_URL", "")
     return url.startswith("postgres://") or url.startswith("postgresql://")
@@ -115,7 +126,8 @@ class DbHandle:
             # Each statement runs independently with loud warnings so one bad
             # view/trigger can never take down boot again (Oct28 crash).
             stmts = [s.strip() for s in re.split(r';\s*\n', sql.strip()) if s.strip()]
-            for stmt in stmts:
+            in_trigger = False
+            for i, stmt in enumerate(stmts):
                 # Strip full-line `--` comments: a literal % or ? inside a
                 # comment reaches psycopg2 param substitution and aborts the
                 # whole statement (prod: merchant_memory never created).
@@ -125,14 +137,28 @@ class DbHandle:
                 ).strip()
                 if not stmt:
                     continue
-                if re.search(r"\b(CREATE|DROP)\s+TRIGGER\b", stmt, re.I):
+                if re.search(r"\bDROP\s+TRIGGER\b", stmt, re.I):
+                    continue
+                if re.search(r"\bCREATE\s+TRIGGER\b", stmt, re.I):
+                    # sqlite-only: skip the whole CREATE..END block. The
+                    # `;`-splitter chops bodies at inner semicolons, so
+                    # continuation chunks are skipped until the closing
+                    # bare END that precedes the next statement.
+                    in_trigger = True
+                    continue
+                if in_trigger:
+                    nxt = stmts[i + 1] if i + 1 < len(stmts) else ""
+                    bare_end = re.fullmatch(r"\s*END\s*;?", stmt)
+                    next_starts = re.match(r"(?is)\s*(CREATE|DROP)\b", nxt)
+                    if bare_end and (not nxt.strip() or next_starts):
+                        in_trigger = False
                     continue
                 try:
                     self.execute(stmt + ";")
                 except Exception as e:
                     print(
                         f"WARN: pg schema statement failed, continuing:"
-                        f" {stmt[:100]!r} -> {e}"
+                        f" {stmt[:100]!r} -> {type(e).__name__}: {redact_url(e)}"
                     )
         else:
             self.conn.executescript(sql)
@@ -724,7 +750,7 @@ def _doc_pg_migrate(db):
         )
         return cur.fetchone() is not None
     except Exception as e:
-        print(f"WARN: doc tenant-sha pg migration: {e}")
+        print(f"WARN: doc tenant-sha pg migration: {redact_url(e)}")
         return False
 
 
@@ -755,7 +781,7 @@ def _doc_sqlite_ensure_composite(db):
             " ON source_documents(tenant_id, sha256);"
         )
     except Exception as e:
-        print(f"WARN: doc tenant-sha unique index: {e}")
+        print(f"WARN: doc tenant-sha unique index: {redact_url(e)}")
 
 
 def _doc_sqlite_viewdefs(db):
@@ -797,7 +823,7 @@ def _doc_sqlite_backup(db):
         db.execute(f"VACUUM INTO '{backup.replace(chr(39), chr(39) * 2)}';")
         return backup
     except Exception as e:
-        print(f"WARN: pre-migration backup failed, aborting rebuild: {e}")
+        print(f"WARN: pre-migration backup failed, aborting rebuild: {redact_url(e)}")
         return None
 
 
@@ -867,7 +893,7 @@ def _doc_sqlite_restore(db, viewdefs, backup):
         db.commit()
         return True
     except Exception as e2:
-        print(f"WARN: restore failed: {e2}; pre-migration backup at {backup}")
+        print(f"WARN: restore failed: {redact_url(e2)}; pre-migration backup at {backup}")
         return False
 
 
@@ -893,7 +919,7 @@ def _doc_sqlite_rebuild(db, viewdefs, backup):
         db.commit()
         return True
     except Exception as e:
-        print(f"WARN: doc table rebuild failed: {e}; attempting restore (backup at {backup})")
+        print(f"WARN: doc table rebuild failed: {redact_url(e)}; attempting restore (backup at {backup})")
         return _doc_sqlite_restore(db, viewdefs, backup)
 
 

@@ -5,6 +5,18 @@ Upload any SA bank PDF, every number traces to exact bbox on original (SHA256 va
 
 Built from scratch, no FINSPIB/FNBP import, for hackathon compliance. Reference extractor (25+ bank adaptors) was READ for design, never copied.
 
+## Live Demo
+
+- App: https://web-production-74f81.up.railway.app
+- API: https://finspy-production.up.railway.app (`/health/ready`)
+- Evidence: 268 pytest green · 44/44 live GUI audit · every download byte-verified (see `docs/tasks/DEPLOY-gui-audit.md`)
+
+> **Auth disclosure (demo):** the live demo trusts `X-User-Id` / numeric
+> bearer (`DEV_AUTH_ENABLED=true`) so judges can click everything without
+> key management. It is unsigned by design for the hackathon; set
+> `DEV_AUTH_ENABLED=false` and real prod must use JWT (roadmap, not
+> implemented). Tenant isolation itself is tested (`test_account_isolation`).
+
 ## Hero Demo Flow (2-3 min video)
 0:00 Problem: pile of PDFs, no proof where number came from  
 0:20 Upload 3 statements -> hash + timestamp appear, vault immutable  
@@ -110,7 +122,7 @@ docs/PLAN,MODULES,FLOWS,UI_SPEC,decisions,METHOD_STATEMENT
 
 ## Current Progress v0.9.0 Day3 close (see STATE.md, CHANGELOG.md, docs/AUTH_PAYSTACK.md, docs/SETTINGS.md, docs/RECAP_DAY3.md)
 - DB: dual + hash-chain audit + isolation tests + indexes + star-schema views + journal balance constraint + per bank account number ledger no contamination per customer 20 private 100 business + PowerBI pack
-- Auth: bcrypt + FastAPI deps require_login/require_subscription + trial pages + reset token + fail-closed secret + email service Resend free tier no-reply
+- Auth: bcrypt + FastAPI deps require_login/require_subscription + trial pages + reset token + fail-closed secret + email service wired with mock fallback (live audit shows `email.mock_sent`; Resend needs API key + verified domain, not yet configured)
 - Paystack: timing-safe verify + checkout/callback/webhook idempotent + plan mapping + free check before has_paystack + live deployment Online ready true backend pg + domain ACTIVE for Paystack live URL proof /health/ready + /privacy POPIA real markdown + uptime ping
 - Extraction: deterministic FNB/STDB/ABSA parsers per bank registry deviations + line-ID grounding + spans bbox + fingerprint dedup + reconciliation gate both directions top->bottom bottom->top totals =/- == balance + review queue + side-by-side viewer + encrypted PDFs + intake classifier bank statement duplicate exclude tamper + golden tests 99% accuracy
 - Tests: 89 passed (80 previous +9: 6 coa_templates incl. vendor export/rule/auto-book/presentation grouping + 3 three-books choice/totals-per-period/422 invalid-params)

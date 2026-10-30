@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { KpiCards } from '../../components/KpiCards';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
+import AccountSelector from '../../components/AccountSelector';
 import {
   DashboardSummary,
   Flag,
@@ -10,7 +11,9 @@ import {
   fetchDashboard,
   fetchFlags,
   formatRands,
+  getStoredAccount,
   runSpy,
+  setStoredAccount,
 } from '../../lib/api';
 
 export default function DashboardPage() {
@@ -26,13 +29,15 @@ function DashboardInner({ uid, me }: { uid: string; me: Me }) {
   const [flags, setFlags] = useState<Flag[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [account, setAccount] = useState('');
 
-  async function load() {
+  async function load(acct?: string) {
     setLoading(true);
     setError('');
     try {
+      const a = acct !== undefined ? acct : account;
       const [summary, flagList] = await Promise.all([
-        fetchDashboard(uid),
+        fetchDashboard(uid, a ? { account_number: a } : undefined),
         fetchFlags(uid).catch(() => [] as Flag[]),
       ]);
       setData(summary);
@@ -45,9 +50,17 @@ function DashboardInner({ uid, me }: { uid: string; me: Me }) {
   }
 
   useEffect(() => {
-    load();
+    const stored = getStoredAccount();
+    setAccount(stored);
+    load(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function pickAccount(acct: string) {
+    setAccount(acct);
+    setStoredAccount(acct);
+    load(acct);
+  }
 
   async function spy() {
     setLoading(true);
@@ -200,8 +213,9 @@ function DashboardInner({ uid, me }: { uid: string; me: Me }) {
 
       <SessionBar me={me} />
 
-      <div className="flex gap-2 items-center">
-        <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
+      <div className="flex gap-4 items-end">
+        <AccountSelector uid={uid} value={account} onChange={pickAccount} />
+        <button onClick={() => load()} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
           {loading ? 'Loading' : 'Reload'}
         </button>
         <button onClick={spy} disabled={loading} className="bg-rose-700 px-4 py-2 rounded disabled:opacity-50">

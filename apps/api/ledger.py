@@ -851,7 +851,8 @@ def trial_balance(
     if not tenant_id:
         raise ValueError("Invalid parameters: tenant_id is required")
     bank_id = None
-    if account_number:
+    unknown_only = account_number == "__unknown"
+    if account_number and not unknown_only:
         brow = db.execute(
             "SELECT id FROM accounts WHERE tenant_id=? AND account_number=?",
             (tenant_id, account_number),
@@ -872,6 +873,12 @@ def trial_balance(
         WHERE a.tenant_id = ?
     """
     params: list = [tenant_id]
+    if unknown_only:
+        q += (" AND (jl.entry_id IS NULL OR jl.entry_id IN (SELECT je2.id"
+              " FROM journal_entries je2 JOIN transactions t"
+              " ON je2.transaction_id=t.id WHERE t.tenant_id=?"
+              " AND (t.account_number IS NULL OR t.account_number='')))")
+        params.append(tenant_id)
     if bank_id:
         # Only entries touching the bank account; untouched accounts
         # fall out (their sums would be zero anyway). Balance holds:

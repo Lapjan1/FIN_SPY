@@ -115,6 +115,11 @@ class TransactionOut(BaseModel):
     doc_id: str
     page_no: int
     line_ids: List[str]
+    account_number: Optional[str] = None
+    bank_name: Optional[str] = None
+    original_filename: Optional[str] = None
+    nature: Optional[str] = None
+    category_id: Optional[str] = None
 
 class DashboardSummary(BaseModel):
     from_date: Optional[str] = None
@@ -433,16 +438,35 @@ async def upload_document(
 def list_documents(request: Request, user_id: int = Depends(require_login)):
     db = get_db()
     tenant_id = _tenant_of(user_id)
-    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
+    cur = db.execute("SELECT id, sha256, original_filename, size_bytes, status, uploaded_at_utc, account_id, account_number, bank_name, branch_code FROM source_documents WHERE tenant_id=? ORDER BY uploaded_at_utc DESC LIMIT 100", (tenant_id,))
     rows = cur.fetchall()
     return [dict(r) if not isinstance(r, dict) else r for r in rows]
 
 @app.get("/v1/transactions")
-def list_transactions(request: Request, status: Optional[str] = None, user_id: int = Depends(require_login)) -> List[TransactionOut]:
+def list_transactions(request: Request, status: Optional[str] = None, account_number: Optional[str] = None, document_id: Optional[str] = None, user_id: int = Depends(require_login)) -> List[TransactionOut]:
     db = get_db()
     tenant_id = _tenant_of(user_id)
+    unknown_only = account_number == "__unknown"
+    if account_number and not unknown_only:
+        brow = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND account_number=?", (tenant_id, account_number)).fetchone()
+        if not brow:
+            raise HTTPException(422, f"Invalid parameters: unknown account_number '{account_number}' for tenant")
     # Read from DB, not extraction directly - DB-first per AGENTS.md
-    cur = db.execute("SELECT * FROM transactions WHERE tenant_id=? ORDER BY txn_date DESC LIMIT 100", (tenant_id,))
+    q = "SELECT t.*, d.original_filename, d.bank_name, c.nature, c.category_id FROM transactions t LEFT JOIN source_documents d ON t.document_id=d.id AND d.tenant_id=t.tenant_id LEFT JOIN classifications c ON c.transaction_id=t.id AND c.tenant_id=t.tenant_id AND NOT EXISTS (SELECT 1 FROM classifications c2 WHERE c2.transaction_id=t.id AND c2.tenant_id=t.tenant_id AND c2.decided_at_utc > c.decided_at_utc) WHERE t.tenant_id=?"
+    params: list = [tenant_id]
+    if status:
+        q += " AND t.status=?"
+        params.append(status)
+    if unknown_only:
+        q += " AND (t.account_number IS NULL OR t.account_number='')"
+    elif account_number:
+        q += " AND t.account_number=?"
+        params.append(account_number)
+    if document_id:
+        q += " AND t.document_id=?"
+        params.append(document_id)
+    q += " ORDER BY t.txn_date DESC LIMIT 100"
+    cur = db.execute(q, tuple(params))
     # For scaffold, return empty if none, else map
     rows = cur.fetchall()
     out = []
@@ -453,7 +477,10 @@ def list_transactions(request: Request, status: Optional[str] = None, user_id: i
             description_raw=d.get("description_raw",""), amount_minor=d.get("amount_minor",0),
             direction=d.get("direction","debit"), balance_after_minor=d.get("balance_after_minor"),
             fingerprint_sha256=d.get("fingerprint_sha256",""), status=d.get("status","proposed"),
-            doc_id=d.get("document_id",""), page_no=1, line_ids=[]
+            doc_id=d.get("document_id",""), page_no=1, line_ids=[],
+            account_number=d.get("account_number"), bank_name=d.get("bank_name"),
+            original_filename=d.get("original_filename"), nature=d.get("nature"),
+            category_id=d.get("category_id"),
         ))
     return out
 
@@ -623,6 +650,19 @@ def list_accounts(user_id: int = Depends(require_login)):
     }
 
 
+def _require_account(tenant_id: str, account_number) -> None:
+    """422 when an account filter names a bank account the tenant lacks."""
+    if not account_number or account_number == "__unknown":
+        return
+    cur = get_db().execute(
+        "SELECT id FROM accounts WHERE tenant_id=? AND account_number=?",
+        (tenant_id, account_number))
+    if not cur.fetchone():
+        raise HTTPException(
+            422, f"Invalid parameters: account_number '{account_number}'"
+            " does not exist for tenant. Use GET /v1/bank-accounts.")
+
+
 @app.post("/v1/books/select")
 def select_book(inp: BooksSelectIn, user_id: int = Depends(require_login)):
     db = get_db()
@@ -646,7 +686,7 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
     from apps.worker.parsers.registry import get_active_template
     active = get_active_template(tenant_id)
     # Validate account_number exists for tenant if provided (never work on non-existing accounts)
-    if account_number:
+    if account_number and account_number != "__unknown":
         cur = db.execute("SELECT id FROM accounts WHERE tenant_id=? AND account_number=?", (tenant_id, account_number))
         if not cur.fetchone():
             raise HTTPException(422, f"Invalid parameters: account_number '{account_number}' does not exist for tenant. Seed COA and use an existing account.")
@@ -659,7 +699,9 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
     if to_date:
         q += " AND txn_date<=?"
         params.append(to_date)
-    if account_number:
+    if account_number == "__unknown":
+        q += " AND (account_number IS NULL OR account_number='')"
+    elif account_number:
         q += " AND account_number=?"
         params.append(account_number)
     q += " ORDER BY txn_date ASC LIMIT 5000"
@@ -668,7 +710,7 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
     # If no data, return zero totals (not mock) so percentages derive from totals
     from apps.worker.spy.kpi import compute_kpis
     # Current balance: sum of signed in period or last balance_after? Use net as proxy
-    kpis = compute_kpis(txns, current_balance_minor=None, from_date=from_date, to_date=to_date, account_number=account_number)
+    kpis = compute_kpis(txns, current_balance_minor=None, from_date=from_date, to_date=to_date, account_number=None if account_number == "__unknown" else account_number)
     trial = get_trial_pages_remaining(user_id)
     # Leak score: use subscription creep or outflow avg
     leak = kpis.get("subscription_creep_minor", 0) or 0
@@ -691,6 +733,20 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
         "trial_pages_remaining": trial,
         "is_trial_unlimited": trial is None
     }
+
+@app.get("/v1/bank-accounts")
+def bank_accounts(user_id: int = Depends(require_login)):
+    """Distinct bank accounts with txn counts for the global picker."""
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    cur = db.execute(
+        "SELECT a.account_number, MAX(d.bank_name) AS bank_name, COUNT(t.id) AS txn_count, MAX(d.uploaded_at_utc) AS last_upload"
+        " FROM accounts a LEFT JOIN transactions t ON t.account_id=a.id AND t.tenant_id=a.tenant_id"
+        " LEFT JOIN source_documents d ON d.account_number=a.account_number AND d.tenant_id=a.tenant_id"
+        " WHERE a.tenant_id=? AND a.account_number IS NOT NULL"
+        " GROUP BY a.account_number ORDER BY bank_name, a.account_number",
+        (tenant_id,))
+    return [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
 @app.get("/v1/review-queue")
 def review_queue(user_id: int = Depends(require_login)):
@@ -835,7 +891,7 @@ def chat(req: ChatRequest, user_id: int = Depends(require_login)):
     return chat_answer(tenant_id, question)
 
 @app.post("/v1/reports")
-def create_report(kind: str = "excel", request: Request = None, user_id: int = Depends(require_subscription)):
+def create_report(kind: str = "excel", account_number: Optional[str] = None, request: Request = None, user_id: int = Depends(require_subscription)):
     db = get_db()
     tenant_id = _tenant_of(user_id)
     report_id = hashlib.sha256(f"{tenant_id}{kind}{os.urandom(8)}".encode()).hexdigest()[:16]
@@ -855,19 +911,23 @@ def create_report(kind: str = "excel", request: Request = None, user_id: int = D
     try:
         if kind == "powerbi":
             from .reports import generate_powerbi_pack
-            pack = generate_powerbi_pack(tenant_id)
+            _require_account(tenant_id, account_number)
+            pack = generate_powerbi_pack(tenant_id, account_number)
             db.execute("UPDATE reports SET file_key=?, file_sha256=?, manifest_key=? WHERE id=?", (pack["file_key"], pack["sha256"], pack["csv_dir"], report_id))
             db.commit()
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": pack["file_key"], "sha256": pack["sha256"], "counts": pack["counts"], "csv_dir": pack["csv_dir"]}
         if kind == "excel":
             from .reports import generate_excel_workbook
-            wb = generate_excel_workbook(tenant_id)
+            _require_account(tenant_id, account_number)
+            wb = generate_excel_workbook(tenant_id, None, None,
+                                        account_number)
             db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (wb["file_key"], wb["sha256"], report_id))
             db.commit()
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": wb["file_key"], "sha256": wb["sha256"]}
         if kind == "auditor-csv":
             from .reports import generate_auditor_csv
-            csv_pack = generate_auditor_csv(tenant_id)
+            _require_account(tenant_id, account_number)
+            csv_pack = generate_auditor_csv(tenant_id, account_number)
             db.execute("UPDATE reports SET file_key=?, file_sha256=? WHERE id=?", (csv_pack["file_key"], csv_pack["sha256"], report_id))
             db.commit()
             return {"id": report_id, "kind": kind, "status": "ready", "file_key": csv_pack["file_key"], "sha256": csv_pack["sha256"], "count": csv_pack["count"]}
@@ -890,7 +950,8 @@ def create_report(kind: str = "excel", request: Request = None, user_id: int = D
         return {"id": report_id, "kind": kind, "status": "failed", "error": str(e)}
 
 @app.get("/v1/reports/powerbi")
-def get_powerbi_pack(user_id: int = Depends(require_login)):
+def get_powerbi_pack(account_number: Optional[str] = None,
+                       user_id: int = Depends(require_login)):
     """
     PowerBI-ready pack: Excel file with star-schema sheets + CSVs per homework Part 5.10
     fact_transactions, fact_journal, dim_date, dim_account, dim_category, dim_entity, dim_document as Excel + CSVs + guide
@@ -899,7 +960,8 @@ def get_powerbi_pack(user_id: int = Depends(require_login)):
     tenant_id = _tenant_of(user_id)
 
     from .reports import generate_powerbi_pack, bundle_powerbi_zip
-    pack = generate_powerbi_pack(tenant_id)
+    _require_account(tenant_id, account_number)
+    pack = generate_powerbi_pack(tenant_id, account_number)
 
     # Audit log
     append_audit_log(tenant_id, user_id, "report.powerbi", "reports", pack["file_key"], {"counts": pack["counts"]})
@@ -973,7 +1035,9 @@ def get_signed_pdf(from_date: str = None, to_date: str = None, user_id: int = De
                         headers={"X-Report-Warning": _warn} if _warn else None)
 
 @app.get("/v1/reports/excel")
-def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int = Depends(require_login)):
+def get_excel_workbook(from_date: str = None, to_date: str = None,
+                         account_number: Optional[str] = None,
+                         user_id: int = Depends(require_login)):
     """
     Excel workbook per Appendix G + P&L + Balance Sheet (12 sheets, 12-month max window).
     """
@@ -982,7 +1046,9 @@ def get_excel_workbook(from_date: str = None, to_date: str = None, user_id: int 
 
     from .reports import generate_excel_workbook
     try:
-        wb = generate_excel_workbook(tenant_id, from_date, to_date)
+        _require_account(tenant_id, account_number)
+        wb = generate_excel_workbook(tenant_id, from_date, to_date,
+                                    account_number)
     except ValueError as e:
         raise HTTPException(422, str(e))
     append_audit_log(tenant_id, user_id, "report.excel", "reports", wb["file_key"], {"sha256": wb["sha256"]})
@@ -1035,7 +1101,8 @@ def get_auditor_csv(vendor: Optional[str] = None, account_number: Optional[str] 
         return FileResponse(str(csv_path), media_type="text/csv",
                             filename=f"finspy-auditor-{safe_vendor}.csv")
 
-    csv_pack = generate_auditor_csv(tenant_id)
+    _require_account(tenant_id, account_number)
+    csv_pack = generate_auditor_csv(tenant_id, account_number)
     append_audit_log(tenant_id, user_id, "report.auditor_csv", "reports", csv_pack["file_key"], {"count": csv_pack["count"], "sha256": csv_pack["sha256"]})
     return FileResponse(csv_pack["file_key"], media_type="text/csv",
                         filename="finspy-auditor.csv")
@@ -1397,6 +1464,10 @@ class ReviewAcceptIn(BaseModel):
 
 
 
+class TxnMoveIn(BaseModel):
+    to_code: str
+    reason: str
+
 class ReviewRejectIn(BaseModel):
     reason: str
 class ReviewEditIn(BaseModel):
@@ -1705,6 +1776,85 @@ def review_accept(
         "journal_entry": entry,
     }
 
+
+@app.post("/v1/transactions/{txn_id}/move")
+def transaction_move(
+    txn_id: str, inp: TxnMoveIn, user_id: int = Depends(require_login)
+):
+    """Re-decode a confirmed row (e.g. out of 9999 suspense): appends a
+    new classification revision and transfers the posted leg. The review
+    queue only shows unconfirmed rows, so this is the way back."""
+    tenant_id = _tenant_of(user_id)
+    txn = _load_owned_review_txn(txn_id, tenant_id)
+    reason = _require_review_reason(inp.reason)
+    from .ledger import transfer_posting, resolve_account, UnknownAccount
+    from .classify import decide
+
+    try:
+        resolve_account(tenant_id, code=inp.to_code)
+    except UnknownAccount as e:
+        raise HTTPException(422, str(e))
+    db = get_db()
+    cur = db.execute(
+        "SELECT * FROM classifications WHERE transaction_id=?"
+        " AND tenant_id=? ORDER BY decided_at_utc DESC LIMIT 1",
+        (txn_id, tenant_id),
+    )
+    row = cur.fetchone()
+    prev = dict(row) if row is not None and not isinstance(row, dict) else row
+    if prev is not None:
+        from_code = prev.get("category_id")
+        nature = prev.get("nature", "unknown")
+        pct = prev.get("business_pct", 0)
+    else:
+        # Legacy orphan (pre-fix auto-book posted with no classification):
+        # recover the posted leg's code from the journal itself.
+        cur = db.execute(
+            "SELECT a.code FROM journal_lines jl"
+            " JOIN journal_entries je ON jl.entry_id=je.id"
+            " JOIN accounts a ON jl.account_id=a.id"
+            " WHERE je.transaction_id=? AND je.tenant_id=?"
+            " AND jl.account_id != ? LIMIT 1",
+            (txn_id, tenant_id, txn.get("account_id")),
+        )
+        r = cur.fetchone()
+        if r is None:
+            raise HTTPException(
+                422,
+                "Invalid parameters: nothing posted to move -"
+                " accept the transaction first",
+            )
+        from_code = r["code"] if isinstance(r, dict) else r[0]
+        nature, pct = "unknown", 0
+    if from_code == inp.to_code:
+        raise HTTPException(
+            422,
+            f"Invalid parameters: already on {inp.to_code} -"
+            " nothing to move",
+        )
+    try:
+        cls = decide(txn_id, nature, pct, inp.to_code,
+                     f"Move {from_code}->{inp.to_code}", user_id,
+                     reason, tenant_id)
+        moved_id = cls.get("transfer_entry_id")
+        if prev is None:
+            # Legacy orphan: decide() had no previous code to move from,
+            # so transfer the recovered posted leg explicitly.
+            moved = transfer_posting(tenant_id, txn_id, from_code,
+                                     inp.to_code, user_id, reason)
+            moved_id = moved["id"] if moved else None
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    append_audit_log(
+        tenant_id, user_id, "review.move", "transactions", txn_id,
+        {"from_code": from_code, "to_code": inp.to_code,
+         "classification_id": cls["id"]},
+    )
+    return {"transaction_id": txn_id, "from_code": from_code,
+            "to_code": inp.to_code, "classification_id": cls["id"],
+            "transfer_entry_id": moved_id}
 
 @app.post("/v1/review-queue/{txn_id}/reject")
 def review_reject(

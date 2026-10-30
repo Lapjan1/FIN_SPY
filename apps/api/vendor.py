@@ -251,5 +251,42 @@ def auto_book_journal_for_rule(transaction_id: str, rule: Dict) -> bool:
     # Post: DB trigger verifies balance (Day4 mechanism - draft freely, enforce at post)
     if not _post_entry(entry_id):
         return False
+    # Behave like a human accept: rule-sourced classification (append-only
+    # chain), confirmed status, audit rows. Without these the posting is
+    # an orphan: visible in Journal, invisible to Private-vs-Business.
+    code = target_category_id
+    if not code:
+        cur = db.execute("SELECT code FROM accounts WHERE id=?",
+                         (target_account_id,))
+        r = cur.fetchone()
+        code = (r["code"] if isinstance(r, dict) else r[0]) if r else None
+    cur = db.execute(
+        "SELECT id FROM classifications WHERE transaction_id=?"
+        " AND tenant_id=? ORDER BY decided_at_utc DESC LIMIT 1",
+        (transaction_id, tenant_id),
+    )
+    prev = cur.fetchone()
+    supersedes = (prev["id"] if isinstance(prev, dict) else prev[0]) if prev else None
+    cls_id = f"cls-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "INSERT INTO classifications (id, tenant_id, transaction_id, nature, business_pct,"
+        " category_id, rationale, source, confidence, decided_by, decided_at_utc, supersedes_id)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (cls_id, tenant_id, transaction_id, nature, business_pct, code,
+         f"Auto-book per rule {rule.get('normalized_merchant')} -> {code} ({rule.get('id')})",
+         "rule", 0.9, rule.get("created_by"), now, supersedes),
+    )
+    db.execute("UPDATE transactions SET status='confirmed' WHERE id=?",
+               (transaction_id,))
+    append_audit_log(tenant_id, rule.get("created_by"),
+                     "classification.rule_auto_book", "classifications",
+                     cls_id,
+                     {"transaction_id": transaction_id,
+                      "rule_id": rule.get("id"), "code": code})
+    append_audit_log(tenant_id, rule.get("created_by"),
+                     "journal.auto_book", "journal_entries", entry_id,
+                     {"transaction_id": transaction_id,
+                      "rule_id": rule.get("id")})
     db.commit()
     return True

@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
+import AccountSelector from '../../components/AccountSelector';
 import {
   Me,
   BookTemplate,
@@ -8,9 +9,12 @@ import {
   SuspenseStatus,
   fetchBookTemplates,
   fetchActiveBook,
+  getStoredAccount,
   selectBook,
+  setStoredAccount,
   fetchTrialBalance,
   fetchSuspense,
+  moveTransaction,
 } from '../../lib/api';
 
 function rands(minor: number): string {
@@ -33,6 +37,10 @@ function BooksInner({ uid, me }: { uid: string; me: Me }) {
   const [suspense, setSuspense] = useState<SuspenseStatus | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [moveTxn, setMoveTxn] = useState('');
+  const [moveCode, setMoveCode] = useState('');
+  const [moveReason, setMoveReason] = useState('');
+  const [moveWorking, setMoveWorking] = useState(false);
 
   async function load(acct: string) {
     setError('');
@@ -53,9 +61,17 @@ function BooksInner({ uid, me }: { uid: string; me: Me }) {
   }
 
   useEffect(() => {
-    load('');
+    const stored = getStoredAccount();
+    setAccountNumber(stored);
+    load(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
+
+  function pickAccount(acct: string) {
+    setAccountNumber(acct);
+    setStoredAccount(acct);
+    load(acct);
+  }
 
   async function switchTemplate(template: string) {
     setError('');
@@ -70,9 +86,24 @@ function BooksInner({ uid, me }: { uid: string; me: Me }) {
     }
   }
 
-  function applyFilter(e: React.FormEvent) {
+  async function moveOut(e: React.FormEvent) {
     e.preventDefault();
-    load(accountNumber.trim());
+    if (!moveTxn.trim() || !moveCode.trim() || !moveReason.trim()) return;
+    setMoveWorking(true);
+    setError('');
+    setNotice('');
+    try {
+      const out = await moveTransaction(uid, moveTxn.trim(), moveCode.trim(), moveReason.trim());
+      setNotice(`Moved ${out.from_code} -> ${out.to_code} (transfer ${out.transfer_entry_id || 'none'}).`);
+      setMoveTxn('');
+      setMoveCode('');
+      setMoveReason('');
+      await load(accountNumber.trim());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Move failed');
+    } finally {
+      setMoveWorking(false);
+    }
   }
 
   const rows = (trial?.lines || []).filter((l) => l.debits !== 0 || l.credits !== 0);
@@ -103,20 +134,9 @@ function BooksInner({ uid, me }: { uid: string; me: Me }) {
             </button>
           ))}
         </div>
-        <form onSubmit={applyFilter} className="flex gap-2 items-end text-sm pt-2">
-          <label className="space-y-1">
-            <span className="text-xs text-slate-400">Bank account number (blank = all)</span>
-            <input
-              value={accountNumber}
-              onChange={(e) => setAccountNumber(e.target.value)}
-              placeholder="e.g. 62123456789"
-              className="block p-2 bg-slate-950 border border-slate-700 rounded w-64"
-            />
-          </label>
-          <button type="submit" className="bg-blue-700 px-4 py-2 rounded text-sm">
-            Apply
-          </button>
-        </form>
+        <div className="pt-2">
+          <AccountSelector uid={uid} value={accountNumber} onChange={pickAccount} />
+        </div>
       </section>
 
       <section className="p-4 bg-slate-900 border border-slate-800 rounded space-y-2">
@@ -192,6 +212,40 @@ function BooksInner({ uid, me }: { uid: string; me: Me }) {
                   <li key={i}>{r}</li>
                 ))}
               </ul>
+            ) : null}
+            {suspense.txn_count > 0 ? (
+              <form onSubmit={moveOut} className="flex flex-wrap gap-2 items-end pt-2 text-sm">
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Transaction id</span>
+                  <input
+                    value={moveTxn}
+                    onChange={(e) => setMoveTxn(e.target.value)}
+                    placeholder="txn-xxxxxxxx"
+                    className="block p-2 bg-slate-950 border border-slate-700 rounded w-40"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Move to code</span>
+                  <input
+                    value={moveCode}
+                    onChange={(e) => setMoveCode(e.target.value)}
+                    placeholder="e.g. 6030"
+                    className="block p-2 bg-slate-950 border border-slate-700 rounded w-32"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Reason (required)</span>
+                  <input
+                    value={moveReason}
+                    onChange={(e) => setMoveReason(e.target.value)}
+                    placeholder="e.g. till slip says fuel"
+                    className="block p-2 bg-slate-950 border border-slate-700 rounded w-56"
+                  />
+                </label>
+                <button type="submit" disabled={moveWorking} className="bg-blue-700 px-4 py-2 rounded text-sm disabled:opacity-50">
+                  {moveWorking ? 'Working...' : 'Move out of suspense'}
+                </button>
+              </form>
             ) : null}
           </div>
         )}

@@ -16,6 +16,11 @@ export type Transaction = {
   doc_id: string;
   page_no: number;
   line_ids: string[];
+  account_number?: string | null;
+  bank_name?: string | null;
+  original_filename?: string | null;
+  nature?: string | null;
+  category_id?: string | null;
 };
 
 export type DashboardSummary = {
@@ -78,7 +83,40 @@ export type DocInfo = {
   size_bytes: number;
   status: string;
   uploaded_at_utc: string;
+  account_id?: string | null;
+  account_number?: string | null;
+  bank_name?: string | null;
+  branch_code?: string | null;
 };
+
+export type BankAccount = {
+  account_number: string | null;
+  bank_name: string | null;
+  txn_count: number;
+  last_upload: string | null;
+};
+
+export function fetchBankAccounts(userId: string): Promise<BankAccount[]> {
+  return api<BankAccount[]>('/v1/bank-accounts', userId);
+}
+
+const ACCOUNT_KEY = 'finspy.account';
+
+export function getStoredAccount(): string {
+  try {
+    return window.localStorage.getItem(ACCOUNT_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStoredAccount(acct: string): void {
+  try {
+    window.localStorage.setItem(ACCOUNT_KEY, acct);
+  } catch {
+    /* storage unavailable - picker just won't persist */
+  }
+}
 
 export async function fetchTransactions(params?: Record<string,string>): Promise<Transaction[]> {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -360,6 +398,26 @@ export type RejectResult = {
   reversed_entry_ids: string[];
 };
 
+export type MoveResult = {
+  transaction_id: string;
+  from_code: string;
+  to_code: string;
+  classification_id: string;
+  transfer_entry_id: string | null;
+};
+
+export function moveTransaction(
+  userId: string,
+  txnId: string,
+  toCode: string,
+  reason: string,
+): Promise<MoveResult> {
+  return api<MoveResult>(`/v1/transactions/${txnId}/move`, userId, {
+    method: 'POST',
+    body: JSON.stringify({ to_code: toCode, reason }),
+  });
+}
+
 export function rejectTransaction(
   userId: string,
   txnId: string,
@@ -401,8 +459,14 @@ export function fetchDashboard(
   return api<DashboardSummary>(`/v1/dashboard/summary${qs}`, userId);
 }
 
-export function fetchTransactionsAuth(userId: string): Promise<Transaction[]> {
-  return api<Transaction[]>('/v1/transactions', userId);
+export function fetchTransactionsAuth(
+  userId: string,
+  params?: { status?: string; account_number?: string; document_id?: string },
+): Promise<Transaction[]> {
+  const qs = params
+    ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString()
+    : '';
+  return api<Transaction[]>(`/v1/transactions${qs}`, userId);
 }
 
 export function fetchTxnSources(userId: string, txnId: string): Promise<TxnSources> {

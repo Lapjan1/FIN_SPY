@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import SourceViewer from '../../components/SourceViewer';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
+import AccountSelector from '../../components/AccountSelector';
 import {
   Me,
   Transaction,
@@ -9,7 +10,10 @@ import {
   fetchTransactionsAuth,
   fetchTxnSources,
   formatRands,
+  getStoredAccount,
+  moveTransaction,
   rejectTransaction,
+  setStoredAccount,
 } from '../../lib/api';
 
 export default function TransactionsPage() {
@@ -29,12 +33,18 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
   const [voidReason, setVoidReason] = useState('');
   const [voidWorking, setVoidWorking] = useState(false);
   const [voidMsg, setVoidMsg] = useState('');
+  const [moveCode, setMoveCode] = useState('');
+  const [moveReason, setMoveReason] = useState('');
+  const [moveWorking, setMoveWorking] = useState(false);
+  const [moveMsg, setMoveMsg] = useState('');
+  const [account, setAccount] = useState('');
 
-  async function load() {
+  async function load(acct?: string) {
     setLoading(true);
     setError('');
     try {
-      setTxns(await fetchTransactionsAuth(uid));
+      const a = acct !== undefined ? acct : account;
+      setTxns(await fetchTransactionsAuth(uid, a ? { account_number: a } : undefined));
       setSelected(null);
       setSources(null);
     } catch (e) {
@@ -45,9 +55,17 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
   }
 
   useEffect(() => {
-    load();
+    const stored = getStoredAccount();
+    setAccount(stored);
+    load(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function pickAccount(acct: string) {
+    setAccount(acct);
+    setStoredAccount(acct);
+    load(acct);
+  }
 
   async function select(txn: Transaction) {
     setSelected(txn);
@@ -79,6 +97,23 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
     }
   }
 
+  async function moveTxn() {
+    if (!selected || !moveCode.trim() || !moveReason.trim()) return;
+    setMoveWorking(true);
+    setError('');
+    try {
+      const out = await moveTransaction(uid, selected.id, moveCode.trim(), moveReason.trim());
+      setMoveMsg(`Moved ${out.from_code} -> ${out.to_code}. Transfer journal: ${out.transfer_entry_id || 'none (was never posted)'}.`);
+      setMoveCode('');
+      setMoveReason('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Move failed');
+    } finally {
+      setMoveWorking(false);
+    }
+  }
+
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
       <div>
@@ -90,8 +125,9 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
 
       <SessionBar me={me} />
 
-      <div className="flex gap-2 items-center">
-        <button onClick={load} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
+      <div className="flex gap-4 items-end">
+        <AccountSelector uid={uid} value={account} onChange={pickAccount} />
+        <button onClick={() => load()} disabled={loading} className="bg-blue-600 px-4 py-2 rounded disabled:opacity-50">
           {loading ? 'Loading' : 'Reload'}
         </button>
       </div>
@@ -117,6 +153,10 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
                   </div>
                   <div className="text-xs text-slate-400 mt-1">
                     {txn.txn_date} - {txn.direction} - {txn.status}
+                    {txn.nature ? ` - ${txn.nature}${txn.category_id ? `/${txn.category_id}` : ''}` : ' - unclassified'}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5 truncate">
+                    {(txn.bank_name || 'Bank')} {(txn.account_number || 'unknown')} - {(txn.original_filename || 'no document')}
                   </div>
                 </button>
               </li>
@@ -138,6 +178,27 @@ function TransactionsInner({ uid, me }: { uid: string; me: Me }) {
                 {voidWorking ? 'Working...' : 'Void with reversals'}
               </button>
               {voidMsg ? <p className="text-xs text-emerald-300">{voidMsg}</p> : null}
+            </div>
+          ) : null}
+          {selected && selected.status === 'confirmed' ? (
+            <div className="border border-slate-800 rounded p-3 space-y-2">
+              <p className="text-sm font-semibold">Move to another account</p>
+              <input
+                value={moveCode}
+                onChange={(e) => setMoveCode(e.target.value)}
+                placeholder="Target code, e.g. 6030"
+                className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-sm"
+              />
+              <input
+                value={moveReason}
+                onChange={(e) => setMoveReason(e.target.value)}
+                placeholder="Reason (required, kept forever for audit)"
+                className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-sm"
+              />
+              <button onClick={moveTxn} disabled={moveWorking || !moveCode.trim() || !moveReason.trim()} className="bg-blue-700 px-4 py-2 rounded text-sm disabled:opacity-50">
+                {moveWorking ? 'Working...' : 'Move with transfer'}
+              </button>
+              {moveMsg ? <p className="text-xs text-emerald-300">{moveMsg}</p> : null}
             </div>
           ) : null}
           {!selected ? (

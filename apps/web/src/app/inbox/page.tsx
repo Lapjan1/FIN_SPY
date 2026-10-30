@@ -77,6 +77,9 @@ function InboxInner({ uid, me }: { uid: string; me: Me }) {
           {docs.map((d) => (
             <li key={d.id} className="p-3 text-sm flex justify-between items-center gap-2">
               <span className="truncate">{d.original_filename}</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0">
+                {(d.bank_name || 'Bank')} {(d.account_number || 'unknown')}
+              </span>
               <span className="font-mono text-xs text-slate-500">{d.sha256.slice(0, 12)}</span>
               <span className="text-xs">{d.status}</span>
               {d.status === 'exception' ? (

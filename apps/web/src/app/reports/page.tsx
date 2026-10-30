@@ -1,7 +1,8 @@
 'use client';
 import React, { useState } from 'react';
 import RequireSession, { SessionBar } from '../../components/RequireSession';
-import { Me, downloadReport } from '../../lib/api';
+import AccountSelector from '../../components/AccountSelector';
+import { Me, downloadReport, getStoredAccount, setStoredAccount } from '../../lib/api';
 
 type Item = {
   id: string;
@@ -10,6 +11,7 @@ type Item = {
   path: (from: string, to: string) => string;
   filename: string;
   dated: boolean;
+  accounted: boolean;
 };
 
 const ITEMS: Item[] = [
@@ -20,6 +22,7 @@ const ITEMS: Item[] = [
     path: (from, to) => `/v1/reports/excel${dates(from, to)}`,
     filename: 'finspy-workbook.xlsx',
     dated: true,
+    accounted: true,
   },
   {
     id: 'powerbi',
@@ -28,6 +31,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/reports/powerbi',
     filename: 'finspy-powerbi.zip',
     dated: false,
+    accounted: true,
   },
   {
     id: 'auditor',
@@ -36,6 +40,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/reports/auditor-csv',
     filename: 'finspy-auditor.csv',
     dated: false,
+    accounted: true,
   },
   {
     id: 'evidence',
@@ -44,6 +49,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/reports/evidence-pack',
     filename: 'finspy-evidence.zip',
     dated: false,
+    accounted: false,
   },
   {
     id: 'signed',
@@ -52,6 +58,7 @@ const ITEMS: Item[] = [
     path: (from, to) => `/v1/reports/signed-pdf${dates(from, to)}`,
     filename: 'finspy-summary.pdf',
     dated: true,
+    accounted: false,
   },
   {
     id: 'popia',
@@ -60,6 +67,7 @@ const ITEMS: Item[] = [
     path: () => '/v1/me/export',
     filename: 'finspy-my-data.zip',
     dated: false,
+    accounted: false,
   },
 ];
 
@@ -82,16 +90,26 @@ export default function ReportsPage() {
 function ReportsInner({ uid, me }: { uid: string; me: Me }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [account, setAccount] = useState(() => getStoredAccount());
   const [working, setWorking] = useState('');
   const [warning, setWarning] = useState('');
   const [error, setError] = useState('');
+
+  function pickAccount(acct: string) {
+    setAccount(acct);
+    setStoredAccount(acct);
+  }
 
   async function download(item: Item) {
     setWorking(item.id);
     setError('');
     setWarning('');
     try {
-      const warn = await downloadReport(uid, item.path(from, to), item.filename);
+      let path = item.path(from, to);
+      if (item.accounted && account) {
+        path += `${path.includes('?') ? '&' : '?'}account_number=${encodeURIComponent(account)}`;
+      }
+      const warn = await downloadReport(uid, path, item.filename);
       if (warn) setWarning(warn);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Download failed');
@@ -107,7 +125,7 @@ function ReportsInner({ uid, me }: { uid: string; me: Me }) {
       <p className="text-sm text-slate-400">
         Generated live from your books on every click. Nothing here is a sample.
       </p>
-      <div className="flex gap-3 text-sm">
+      <div className="flex gap-3 text-sm items-end">
         <label className="space-y-1">
           <span className="text-xs text-slate-400">From (dated reports)</span>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="block p-2 bg-slate-900 border border-slate-700 rounded" />
@@ -116,7 +134,11 @@ function ReportsInner({ uid, me }: { uid: string; me: Me }) {
           <span className="text-xs text-slate-400">To (dated reports)</span>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="block p-2 bg-slate-900 border border-slate-700 rounded" />
         </label>
+        <AccountSelector uid={uid} value={account} onChange={pickAccount} />
       </div>
+      <p className="text-xs text-slate-500">
+        Excel, PowerBI, and Auditor CSV slice by account. Evidence pack, signed PDF, and POPIA stay whole-tenant.
+      </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
       {warning ? <p className="text-sm text-amber-300">Warning: {warning}</p> : null}
       <ul className="space-y-2">

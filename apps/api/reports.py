@@ -34,7 +34,7 @@ def _git_commit() -> str:
     except Exception:
         return "unknown"
 
-def generate_powerbi_pack(tenant_id: str) -> Dict:
+def generate_powerbi_pack(tenant_id: str, account_number=None) -> Dict:
     """
     Generate PowerBI-ready pack: Excel file with star-schema sheets + CSVs per homework Part 5.10
     Returns {file_key, sha256, csv_keys}
@@ -43,11 +43,25 @@ def generate_powerbi_pack(tenant_id: str) -> Dict:
 
     # Query star-schema views
     # fact_transactions
-    cur = db.execute("SELECT * FROM fact_transactions WHERE tenant_id=?", (tenant_id,))
+    _unk = account_number == "__unknown"
+    _ft = ("SELECT * FROM fact_transactions WHERE tenant_id=?" +
+           (" AND (account_number IS NULL OR account_number='')" if _unk
+            else (" AND account_number=?" if account_number else "")))
+    cur = db.execute(_ft, (tenant_id, account_number)
+                     if account_number and not _unk else (tenant_id,))
     fact_txn_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
     # fact_journal
-    cur = db.execute("SELECT * FROM fact_journal WHERE tenant_id=?", (tenant_id,))
+    _fj = ("SELECT * FROM fact_journal WHERE tenant_id=?" +
+           (" AND transaction_id IN (SELECT id FROM transactions"
+            " WHERE tenant_id=? AND (account_number IS NULL OR"
+            " account_number=''))" if _unk
+            else (" AND transaction_id IN (SELECT id FROM transactions"
+            " WHERE tenant_id=? AND account_number=?)"
+            if account_number else "")))
+    cur = db.execute(_fj, (tenant_id, tenant_id)
+                     if _unk else ((tenant_id, tenant_id, account_number)
+                     if account_number else (tenant_id,)))
     fact_journal_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
     # dim_account
@@ -63,7 +77,16 @@ def generate_powerbi_pack(tenant_id: str) -> Dict:
     dim_entity_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
     # dim_document
-    cur = db.execute("SELECT * FROM dim_document WHERE tenant_id=?", (tenant_id,))
+    _dd = ("SELECT * FROM dim_document WHERE tenant_id=?" +
+           (" AND id IN (SELECT id FROM source_documents"
+            " WHERE tenant_id=? AND (account_number IS NULL OR"
+            " account_number=''))" if _unk
+            else (" AND id IN (SELECT id FROM source_documents"
+            " WHERE tenant_id=? AND account_number=?)"
+            if account_number else "")))
+    cur = db.execute(_dd, (tenant_id, tenant_id)
+                     if _unk else ((tenant_id, tenant_id, account_number)
+                     if account_number else (tenant_id,)))
     dim_document_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
     # dim_date
@@ -303,7 +326,7 @@ def build_popia_zip(tenant_id: str) -> str:
     return str(zip_path)
 
 
-def generate_auditor_csv(tenant_id: str) -> Dict:
+def generate_auditor_csv(tenant_id: str, account_number=None) -> Dict:
     """
     Generate CSV for auditor to input in their bookkeeping package per user decision:
     Export package the auditor can use the data export to csv and input in their bookkeeping package
@@ -315,6 +338,7 @@ def generate_auditor_csv(tenant_id: str) -> Dict:
     csv_path = REPORTS_PATH / f"auditor_export_{tenant_id}_{timestamp}.csv"
 
     # Query transactions with classifications and account info for auditor
+    _unk = account_number == "__unknown"
     cur = db.execute("""
         SELECT t.id, t.txn_date as date, t.description_raw as description, t.amount_minor, t.currency, t.direction,
                t.balance_after_minor, t.fingerprint_sha256, t.status, t.account_number, t.document_id,
@@ -325,9 +349,13 @@ def generate_auditor_csv(tenant_id: str) -> Dict:
         LEFT JOIN classifications c ON t.id = c.transaction_id
         LEFT JOIN accounts a ON t.account_id = a.id
         LEFT JOIN source_documents d ON t.document_id = d.id
-        WHERE t.tenant_id=?
+        WHERE t.tenant_id=?"""
+        + (" AND (t.account_number IS NULL OR t.account_number='')"
+           if _unk else (" AND t.account_number=?" if account_number else ""))
+        + """
         ORDER BY t.txn_date ASC
-    """, (tenant_id,))
+    """, (tenant_id, account_number)
+        if account_number and not _unk else (tenant_id,))
     rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
     # Write CSV with headers suitable for Pastel, Xero, QuickBooks, Sage import
@@ -387,7 +415,8 @@ def _validate_window(from_date: str | None, to_date: str | None) -> None:
             raise ValueError("Invalid parameters: window exceeds 12 months")
 
 
-def _wb_fetch(tenant_id: str, from_date, to_date, lim: int) -> Dict:
+def _wb_fetch(tenant_id: str, from_date, to_date, lim: int,
+              account_number=None) -> Dict:
     db = get_db()
 
     def dated(table_col: str):
@@ -401,23 +430,41 @@ def _wb_fetch(tenant_id: str, from_date, to_date, lim: int) -> Dict:
         return q, p
 
     jq, jp = dated("je.entry_date")
+    _unk = account_number == "__unknown"
+    aq = (" AND (t.account_number IS NULL OR t.account_number='')"
+          if _unk else (" AND t.account_number=?" if account_number else ""))
+    ap = [account_number] if account_number and not _unk else []
     cur = db.execute(
         "SELECT je.id, je.entry_date, je.memo, a.code, a.name, jl.debit_minor,"
         " jl.credit_minor FROM journal_entries je JOIN journal_lines jl"
         " ON je.id=jl.entry_id LEFT JOIN accounts a ON jl.account_id=a.id"
-        " WHERE je.tenant_id=? AND je.posted=1" + jq +
-        " ORDER BY je.entry_date ASC LIMIT ?", (tenant_id, *jp, lim))
+        " LEFT JOIN transactions t ON je.transaction_id=t.id"
+        " WHERE je.tenant_id=? AND je.posted=1" + jq + aq +
+        " ORDER BY je.entry_date ASC LIMIT ?", (tenant_id, *jp, *ap, lim))
     journal = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     tq, tp = dated("txn_date")
+    uf = (" AND (t.account_number IS NULL OR t.account_number='')"
+          if _unk else (" AND t.account_number=?" if account_number else ""))
     cur = db.execute(
-        "SELECT id, txn_date, description_raw, amount_minor, direction,"
-        " balance_after_minor, fingerprint_sha256, status, document_id"
-        " FROM transactions WHERE tenant_id=?" + tq +
-        " ORDER BY txn_date DESC LIMIT ?", (tenant_id, *tp, lim))
+        "SELECT t.id, t.txn_date, t.description_raw, t.amount_minor,"
+        " t.direction, t.balance_after_minor, t.fingerprint_sha256,"
+        " t.status, t.document_id, t.account_number, d.original_filename,"
+        " c.nature, c.category_id, c.rationale"
+        " FROM transactions t LEFT JOIN source_documents d"
+        " ON t.document_id=d.id AND d.tenant_id=t.tenant_id"
+        " LEFT JOIN classifications c ON c.transaction_id=t.id"
+        " AND c.tenant_id=t.tenant_id AND NOT EXISTS (SELECT 1"
+        " FROM classifications c2 WHERE c2.transaction_id=t.id"
+        " AND c2.tenant_id=t.tenant_id AND c2.decided_at_utc > c.decided_at_utc)"
+        " WHERE t.tenant_id=?" + tq + uf +
+        " ORDER BY t.txn_date DESC LIMIT ?",
+        (tenant_id, *tp, *ap, lim))
     txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     cur = db.execute("SELECT COUNT(*) as n FROM journal_lines jl JOIN journal_entries je"
-                     " ON jl.entry_id=je.id WHERE je.tenant_id=? AND je.posted=1" + jq,
-                     (tenant_id, *jp))
+                     " ON jl.entry_id=je.id LEFT JOIN transactions t"
+                     " ON je.transaction_id=t.id"
+                     " WHERE je.tenant_id=? AND je.posted=1" + jq + aq,
+                     (tenant_id, *jp, *ap))
     _crow = cur.fetchone()
     jl_count = _crow["n"] if isinstance(_crow, dict) else _crow[0]
     cur = db.execute("SELECT id, code, name, type FROM accounts WHERE tenant_id=?"
@@ -428,8 +475,8 @@ def _wb_fetch(tenant_id: str, from_date, to_date, lim: int) -> Dict:
         " SUM(CASE WHEN t.direction='credit' THEN t.amount_minor ELSE 0 END) as inflow,"
         " SUM(CASE WHEN t.direction='debit' THEN t.amount_minor ELSE 0 END) as outflow"
         " FROM classifications c JOIN transactions t ON c.transaction_id=t.id"
-        " WHERE t.tenant_id=?" + tq.replace("txn_date", "t.txn_date") +
-        " GROUP BY c.nature", (tenant_id, *tp))
+        " WHERE t.tenant_id=?" + tq.replace("txn_date", "t.txn_date") + aq +
+        " GROUP BY c.nature", (tenant_id, *tp, *ap))
     nature_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     cur = db.execute("SELECT id, test_id, severity, result_json, created_at FROM flags"
                      " WHERE tenant_id=? ORDER BY created_at DESC LIMIT 500", (tenant_id,))
@@ -496,11 +543,18 @@ def _wb_txns_journal(wb, bold, data):
                    "amount_minor": t.get("amount_minor", 0),
                    "direction": t.get("direction", ""),
                    "balance_after": t.get("balance_after_minor", ""),
-                   "fingerprint": t.get("fingerprint_sha256", ""),
+                   "account_number": t.get("account_number", ""),
+                   "document": t.get("original_filename", "") or t.get("document_id", ""),
+                   "nature": t.get("nature", "") or "unclassified",
+                   "category": t.get("category_id", ""),
+                   "rationale": (t.get("rationale", "") or "")[:300],
                    "status": t.get("status", ""),
+                   "fingerprint": t.get("fingerprint_sha256", ""),
                    "document_id": t.get("document_id", "")} for t in data["txns"]],
              ["id", "txn_date", "description", "amount_minor", "direction",
-              "balance_after", "fingerprint", "status", "document_id"], bold)
+              "balance_after", "account_number", "document", "nature",
+              "category", "rationale", "status", "fingerprint",
+              "document_id"], bold)
     ws = wb.add_worksheet("Journal")
     _wb_dump(ws, [{"entry_id": j.get("id", ""), "entry_date": j.get("entry_date", ""),
                    "memo": j.get("memo", ""), "account_code": j.get("code", ""),
@@ -610,6 +664,7 @@ def _wb_misc(wb, bold, data):
         "DB-first: Extract -> persist with line IDs + bbox -> all products read DB.",
         "Money in minor units (cents); live SUMIFS recompute from Journal.",
         "Posted entries only (posted=1). Window capped at 12 months.",
+        "9999 Suspense is type expense: it lands on P&L until re-decoded via Move.",
         "Mixed classification exceptional (startup/sole-prop); see DISCLAIMER.md.",
     ]):
         ws.write(ri, 0, line)
@@ -626,7 +681,8 @@ def _wb_misc(wb, bold, data):
 
 
 def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
-                            to_date: str | None = None) -> Dict:
+                            to_date: str | None = None,
+                            account_number=None) -> Dict:
     """
     Workbook per Appendix G + P&L + Balance Sheet, bounded to a 12-month
     window so a full year pulls in one memory-safe query:
@@ -640,7 +696,7 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
     _validate_window(from_date, to_date)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     excel_path = REPORTS_PATH / f"fin_spy_workbook_{tenant_id}_{ts}.xlsx"
-    data = _wb_fetch(tenant_id, from_date, to_date, 5000)
+    data = _wb_fetch(tenant_id, from_date, to_date, 5000, account_number)
     wb = xlsxwriter.Workbook(str(excel_path))
     bold = wb.add_format({"bold": True})
     _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data)

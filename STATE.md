@@ -1,6 +1,8 @@
 # STATE (updated 2026-10-30 - Intake forensic DONE 311 passed, see docs/tasks/FIX-intake-forensic.md)
 
 ## Working - Evidence with date
+- **ROW GROUPING + LOUD FAILURES (330 green):** y-band/x-sort regrouping on the PyMuPDF path (tests/test_row_grouping.py 3/3) so column-emitted FNB rows parse (real-sample probe 419 frags -> 125 clean rows, PII kept out of repo); year inference from Statement Period/Date end-year + Dec/Jan rollover (tests/test_generic_year.py 4/4); FNB stated opening/closing now survive (derivation fallback-only) after the golden suite caught the visual-vs-emission order flip; 401/403 raise ModelAuthError (audit extraction.auth_fail, key never echoed); zero rows -> exception never proposed (decide_doc_status, tests/test_loud_failures.py 6/6). Gates: 330 passed, tsc 0. Evidence docs/tasks/FIX-row-grouping.md. Live deps: (pending step 3).
+
 - **CSV SNIFF FIX (9c755e8, 315 green):** _looks_csv skips ragged preamble/trailer lines before the uniformity check (same 2+/3+ bar), so titled bank CSVs parse instead of falling to splitlines (0 rows). 4 red-first tests; live API 91c232ff: titled CSV gate True, 5 txns (was 0). Learning 63.
 
 - **HELP REFRESH (29aaf2f, 1 file, +21/-7):** /help covers Books/Debt/Reports + void flow + owner settings + CSV/OFX (verified by grep on HEAD: Books 3, Debt 2, Reports 2, Void 2, CSV 2, OFX 1, settings 1). Audited 2026-10-30 during HEAD documentation check; no separate task doc (single-page copy).

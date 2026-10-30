@@ -373,3 +373,14 @@ Symptom: titled bank CSVs extracted 0 rows; the title row broke the uniformity c
 Cause: _looks_csv required the FIRST rows uniform; real exports frame the table with title/balance lines.
 Fix: skip leading <3-cell rows, then require the uniform run to hold (same 2+/3+ bar); prose still rejected, TXT-amount guard intact (9c755e8, tests/test_csv_sniff.py 4).
 Applies when: any format sniff - frame lines are data about the file, not rows of the table; skip them before judging shape.
+## 2026-10-30-64 Stated totals beat derived totals; y-sort changes row order
+Symptom: golden reconciliation failed after row-major regrouping - opening 2109055/closing 1189055 vs stated R12 340.55/R20 790,55.
+Cause: two stacked issues. (1) FNB parser CLOBBERED stated balances with row-derived estimates, which assume chronological rows. (2) y-sorted grouping returns visual order, not emission order; the synthetic PDF is emitted bottom-up, so rows run reverse-chronological and the estimates went wrong. Native grouping had masked (1) by preserving emission order.
+Fix: stated balances are ground truth, derivation is fallback-only (apps/worker/parsers/fnb.py:182-199); pinned both directions with tests. Period year anchors on the END year (years[-1]) since ranges span Dec/Jan.
+Applies when: any parser combining stated + computed values - stated wins, computed fills gaps only; and any grouping change must re-check order assumptions downstream (golden suite is the tripwire).
+
+## 2026-10-30-65 Auth failures must raise, never mock
+Symptom: live Meta key 401s, LLM fallback dead, zero-row docs marked proposed - silent scam state.
+Cause: MetaClient.complete swallowed EVERY exception into a mock zero-row result; worker proposed anything the gate didn't fail, and an empty gate passes vacuously.
+Fix: 401/403 (by SDK name or status code) raise ModelAuthError naming provider/model (key never echoed), re-raised through llm_fallback, worker audits extraction.auth_fail + marks exception; decide_doc_status forces zero rows to exception with a re-extract warning (tests/test_loud_failures.py 6/6). Chat keeps its broad catch (best-effort rephrase, tries next provider).
+Applies when: any fallback chain - distinguish 'no key configured' (mock OK for tests) from 'key rejected' (loud, human must rotate); and any gate over empty input must fail closed, never pass vacuously.

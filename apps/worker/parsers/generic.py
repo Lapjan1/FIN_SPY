@@ -4,7 +4,7 @@ SA-wide date/amount/balance line patterns plus running-balance chaining.
 Sits between the bank-specific parsers and the LLM last resort: only
 balance-validated (chained) rows are returned, everything else stays
 unaccounted for the LLM or human review. Never invents rows.
-Limits (v1): needs year-bearing dates; needs a balance column to chain
+Limits (v1): yearless day-month rows take the Statement Period/Date year (Dec/Jan rollover only); needs a balance column to chain
 against; single-line rows only (no continuations); amount-then-balance
 column order (the SA standard).
 """
@@ -41,8 +41,45 @@ _MONEY_RE = re.compile(
 )
 
 
-def normalize_generic_date(text: str) -> Optional[str]:
-    """First year-bearing SA date in text as YYYY-MM-DD, else None."""
+_YEARLESS_RE = re.compile(
+    r"\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b",
+    re.I)
+_PERIOD_RE = re.compile(
+    r"statement\s+(period|date)\s*:?.*?(\d{4})", re.I)
+
+
+def _period_context(pages: List[Dict]):
+    """(year, end_month) from the Statement Period/Date line, else (None, None)."""
+    for p in pages:
+        for line in p.get("lines", []):
+            text = line.get("text", "")
+            m = _PERIOD_RE.search(text)
+            if not m:
+                continue
+            years = [int(y) for y in re.findall(r"\d{4}", text)]
+            year = years[-1] if years else int(m.group(2))
+            months = [_MONTHS[w.lower()[:3]] for w in re.findall(
+                r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*",
+                text, re.I) if w.lower()[:3] in _MONTHS]
+            return year, (months[-1] if months else None)
+    return None, None
+
+
+def _infer_year(row_month: int, period_year, period_end_month):
+    if period_year is None:
+        return None
+    if period_end_month == 1 and row_month == 12:
+        return period_year - 1
+    return period_year
+
+
+def normalize_generic_date(text: str, period_year=None,
+                           period_end_month=None) -> Optional[str]:
+    """First SA date in text as YYYY-MM-DD, else None.
+
+    Year-bearing forms win; yearless day-month rows take the statement
+    period year (Dec rows in a January-ending period roll back a year).
+    """
     for kind, rx in _DATE_RES:
         m = rx.search(text)
         if not m:
@@ -63,6 +100,16 @@ def normalize_generic_date(text: str) -> Optional[str]:
             return f"{year_i:04d}-{mon_i:02d}-{day_i:02d}"
         except (ValueError, KeyError):
             continue
+    m = _YEARLESS_RE.search(text)
+    if m:
+        try:
+            day_i = int(m.group(1))
+            mon_i = _MONTHS[m.group(2)[:3].lower()]
+            year_i = _infer_year(mon_i, period_year, period_end_month)
+            if year_i is not None and 1 <= day_i <= 31:
+                return f"{year_i:04d}-{mon_i:02d}-{day_i:02d}"
+        except (ValueError, KeyError):
+            pass
     return None
 
 
@@ -107,6 +154,7 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
     total_lines = sum(len(p.get("lines", [])) for p in pages)
     flat = [(p.get("page_no", 1), line)
             for p in pages for line in p.get("lines", [])]
+    period_year, period_end_month = _period_context(pages)
 
     opening = closing = None
     account_number = None
@@ -130,7 +178,8 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
         low = text.lower()
         if "opening balance" in low or "closing balance" in low:
             continue
-        date = normalize_generic_date(text)
+        date = normalize_generic_date(text, period_year,
+                                      period_end_month)
         if date is None:
             continue
         toks = _money_tokens(text)

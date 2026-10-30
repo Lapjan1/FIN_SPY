@@ -17,11 +17,19 @@ from apps.api.db import get_db, init_db, append_audit_log, compute_row_hash
 from apps.worker.parsers.extractor import extract_document, persist_to_db
 from apps.worker.parsers.base import ExtractionResult
 from apps.worker.reconcile import run_reconciliation_gate
+from apps.worker.llm.client import ModelAuthError
 
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "./data/vault"))
 RATE_LIMIT_RPM = int(os.getenv("META_RATE_LIMIT_RPM", "100"))
 # Global rate limiter: 100 RPM per AGENTS.md
 REQUEST_INTERVAL = 60.0 / RATE_LIMIT_RPM if RATE_LIMIT_RPM > 0 else 0.6
+
+def decide_doc_status(gate_pass: bool, row_count: int) -> str:
+    """Review status: zero rows can never be proposed - there is
+    nothing to review. Gate failures are exceptions too."""
+    if row_count == 0:
+        return "exception"
+    return "proposed" if gate_pass else "exception"
 
 def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: str, uploaded_by: int, password: str = None):
     """
@@ -69,10 +77,11 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
 
         has_recon_fail = not gate["overall_pass"]
         has_low_coverage = any("Low coverage" in w for w in warnings)
+        has_zero_rows = len(result.rows) == 0
 
-        status = "proposed"
-        if has_recon_fail:
-            status = "exception"
+        status = decide_doc_status(gate["overall_pass"], len(result.rows))
+        if has_zero_rows:
+            warnings.append("0 rows extracted - re-extract or capture manually")
 
         stage = "gate"
         print(f"worker: doc {doc_id} stage=gate pass={gate['overall_pass']}")
@@ -244,6 +253,13 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
 
         return status, result
 
+    except ModelAuthError as e:
+        db.execute("UPDATE extraction_runs SET status=?, finished_at=? WHERE id=?", ("fail", datetime.now(timezone.utc).isoformat(), run_id))
+        db.execute("UPDATE source_documents SET status=? WHERE id=?", ("exception", doc_id))
+        db.commit()
+        append_audit_log(tenant_id, uploaded_by, "extraction.auth_fail", "extraction_runs", run_id, {"error": str(e)[:500]})
+        print(f"worker: doc {doc_id} FAILED stage={stage} exc=ModelAuthError msg={e}")
+        return "exception", None
     except ValueError as e:
         # Encrypted needs password per our encrypted handling
         if "needs_password" in str(e).lower() or "encrypted" in str(e).lower():

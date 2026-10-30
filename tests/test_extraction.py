@@ -139,3 +139,33 @@ def test_llm_fallback_mock(monkeypatch):
     assert result.rows == []
     assert result.warnings
     assert all(u["reason"] == "llm_failed" for u in result.unaccounted_lines)
+def test_fnb_stated_balances_survive_reversed_rows():
+    # Stated opening/closing are ground truth; row-derived estimates must
+    # not overwrite them (visual y-sorted rows are not always chronological).
+    pages = [{
+        "page_no": 1, "width": 595, "height": 842,
+        "lines": [
+            {"line_id": "L001", "bbox": [0, 0, 100, 10], "text": "Opening Balance: R12 340.55", "text_hash": "a"},
+            {"line_id": "L002", "bbox": [0, 10, 100, 20], "text": "29 Oct 2026 VODACOM R300,00- R20 790,55", "text_hash": "b"},
+            {"line_id": "L003", "bbox": [0, 20, 100, 30], "text": "25 Oct 2026 WOOLWORTHS R450,00- R11 890,55", "text_hash": "c"},
+            {"line_id": "L004", "bbox": [0, 30, 100, 40], "text": "Closing Balance: R20 790,55", "text_hash": "d"},
+        ],
+    }]
+    result = parse_fnb_lines(pages)
+    assert len(result.rows) == 2
+    assert result.opening_balance_minor == 1234055
+    assert result.closing_balance_minor == 2079055
+
+
+def test_fnb_balances_derived_when_unstated():
+    # Fallback preserved: no stated lines -> derive from chronological rows.
+    pages = [{
+        "page_no": 1, "width": 595, "height": 842,
+        "lines": [
+            {"line_id": "L001", "bbox": [0, 0, 100, 10], "text": "25 Oct 2026 WOOLWORTHS R450,00- R11 890,55", "text_hash": "a"},
+            {"line_id": "L002", "bbox": [0, 10, 100, 20], "text": "26 Oct 2026 RENT R5 000,00- R6 890,55", "text_hash": "b"},
+        ],
+    }]
+    result = parse_fnb_lines(pages)
+    assert result.opening_balance_minor == 1234055
+    assert result.closing_balance_minor == 689055

@@ -9,7 +9,35 @@ import json
 
 from .base import ExtractionResult, Span
 from .fnb import parse_fnb_lines
-from ..llm.client import MetaClient, provider_for_model, resolve_model
+from ..llm.client import (MetaClient, ModelAuthError, provider_for_model, resolve_model)
+
+def _group_words_rows(words, tol: float = 3.0) -> List[Dict]:
+    """Row-major word grouping for column-emitted PDFs.
+
+    FNB-class writers emit one column per content block, so native
+    (block, line) ids shred a visual row into date/description/amount
+    fragments no parser can fire on. Band by y-center within
+    tolerance, x-sort inside each band. Returns [{bbox, text}].
+    """
+    bands: list = []
+    for w in sorted(words, key=lambda w: (w[1] + w[3]) / 2):
+        yc = (w[1] + w[3]) / 2
+        if bands and abs(yc - bands[-1][0]) <= tol:
+            bands[-1][1].append(w)
+        else:
+            bands.append([yc, [w]])
+    rows = []
+    for _, wl in bands:
+        ordered = sorted(wl, key=lambda w: w[0])
+        rows.append({
+            "bbox": [min(w[0] for w in ordered),
+                     min(w[1] for w in ordered),
+                     max(w[2] for w in ordered),
+                     max(w[3] for w in ordered)],
+            "text": " ".join(w[4] for w in ordered),
+        })
+    return rows
+
 
 def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> List[Dict]:
     """
@@ -35,22 +63,12 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
             width, height = page.rect.width, page.rect.height
             # Get words with bbox
             words = page.get_text("words")  # x0,y0,x1,y1,word,block,line,word_no
-            # Group words into lines by y proximity
-            lines_dict = {}
-            for w in words:
-                x0,y0,x1,y1,word,block_no,line_no,word_no = w
-                key = (block_no, line_no)
-                if key not in lines_dict:
-                    lines_dict[key] = []
-                lines_dict[key].append((x0,y0,x1,y1,word))
+            # Row-major grouping: native (block, line) ids shred
+            # column-emitted rows (FNB-class), so band by y instead.
             lines = []
-            for (block_no, line_no), word_list in sorted(lines_dict.items()):
-                word_list_sorted = sorted(word_list, key=lambda x: x[0])
-                x0 = min(w[0] for w in word_list)
-                y0 = min(w[1] for w in word_list)
-                x1 = max(w[2] for w in word_list)
-                y1 = max(w[3] for w in word_list)
-                text = " ".join(w[4] for w in word_list_sorted)
+            for grouped in _group_words_rows(words):
+                x0, y0, x1, y1 = grouped["bbox"]
+                text = grouped["text"]
                 line_id = f"L{line_counter:03d}"
                 line_counter += 1
                 text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -348,6 +366,8 @@ def llm_fallback(pages: List[Dict], model_id: Optional[str] = None, tenant_id: s
             closing_balance_minor=closing_minor
         )
 
+    except ModelAuthError:
+        raise
     except Exception as e:
         # P0-A0/Q3: never fabricate rows on LLM failure. Zero rows
         # plus a loud warning - the doc visibly needs re-extract or

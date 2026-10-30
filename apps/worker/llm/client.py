@@ -41,6 +41,7 @@ CAPABILITIES_MAP: Dict[str, Capabilities] = {
 class PrivacyGateDenied(Exception): pass
 class RateLimitError(Exception): pass
 class ModelNotLoaded(Exception): pass
+class ModelAuthError(Exception): pass
 
 class MetaClient:
     """
@@ -116,6 +117,18 @@ class MetaClient:
             return ModelResult(content=content, tool_calls=tool_calls, usage=usage, finish_reason=choice.finish_reason, model_id=self.model_id)
 
         except Exception as e:
+            _nm = type(e).__name__
+            _code = getattr(e, "status_code", None) or getattr(e, "code", None)
+            if _nm in ("AuthenticationError", "PermissionDeniedError") \
+                    or _code in (401, 403, "401", "403"):
+                print(f"MetaClient AUTH FAILED provider={self.provider}"
+                      f" model={self.model_id} base={self.base_url}"
+                      f" err={_nm} code={_code} - key rejected, raising loud")
+                raise ModelAuthError(
+                    f"Model auth failed ({_code or _nm})"
+                    f" provider={self.provider} model={self.model_id}: key"
+                    " rejected - LLM fallback unavailable."
+                    " Mint a fresh key and requeue.") from e
             # Fallback to mock for tests/fakes if API fails, but log
             # For hackathon, log token usage for cost guard per config/models.yaml per_document_token_ceiling 15000
             print(f"MetaClient complete failed provider {self.provider} model {self.model_id} base {self.base_url}: {e} - returning mock for tests")

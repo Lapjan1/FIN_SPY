@@ -180,13 +180,17 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                 unaccounted.append({"line_id": line['line_id'], "reason": "unreadable"})
 
     # Reconciliation gate per AGENTS.md: opening + sum(signed rows) = closing
-    # For scaffold, estimate opening from first balance + first amount
-    if rows and rows[0].balance_after_minor:
+    # Row-derived estimates are a FALLBACK only: stated balances are ground
+    # truth and must survive (derivation assumes chronological row order,
+    # which visual y-sorted extraction does not guarantee).
+    if opening is None and rows and rows[0].balance_after_minor:
         # opening = balance_after - signed amount of first row
         first = rows[0]
         signed = -first.amount_minor if first.direction=="debit" else first.amount_minor
         opening = first.balance_after_minor - signed
-        closing = rows[-1].balance_after_minor if rows[-1].balance_after_minor else None
+    if closing is None and rows and rows[-1].balance_after_minor:
+        closing = rows[-1].balance_after_minor
+    if opening is not None and closing is not None and rows:
         computed = opening
         for r in rows:
             signed = -r.amount_minor if r.direction=="debit" else r.amount_minor

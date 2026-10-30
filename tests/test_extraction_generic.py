@@ -129,10 +129,10 @@ def test_mystery_pdf_end_to_end_no_llm(tmp_path, monkeypatch):
     pdf = tmp_path / "ubuntu.pdf"
     doc = pymupdf.open()
     page = doc.new_page()
-    y = 780
+    y = 72
     for t in LINES:
         page.insert_text((40, y), t)
-        y -= 22
+        y += 22
     doc.save(str(pdf))
     doc.close()
 

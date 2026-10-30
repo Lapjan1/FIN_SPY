@@ -503,6 +503,12 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
     for row in result.rows:
         txn_id = f"txn-{uuid.uuid4().hex[:8]}"
         fp = fingerprint_txn(row.date, row.amount_minor, row.description)
+        if not account_number:
+            # Unknown account: scope the fingerprint to this document so
+            # identical rows (debit orders) in another unknown-account
+            # statement do not dedup against each other. Re-extracts of
+            # THIS doc keep the same fp and still dedup correctly.
+            fp = hashlib.sha256(f"{fp}|{document_id}".encode()).hexdigest()
         # Ensure transaction only once ever per bank account number per user question: UNIQUE(tenant_id, account_number, fingerprint_sha256)
         # Check if fingerprint already exists for this tenant + account_number
         cur = db.execute("SELECT id FROM transactions WHERE tenant_id=? AND account_number=? AND fingerprint_sha256=?", (tenant_id, account_number or "", fp))

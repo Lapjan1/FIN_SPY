@@ -293,6 +293,14 @@ async def upload_document(
         raise HTTPException(400, "File too large >50MB")
     if not file.filename.lower().endswith(('.pdf','.csv','.ofx','.jpg','.jpeg','.png')):
         raise HTTPException(400, "Unsupported type")
+    if file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+        # No OCR stage exists yet (extractor raises) - fail fast with
+        # 422 instead of spending trial quota on a doomed document.
+        raise HTTPException(
+            422,
+            "Invalid parameters: image uploads need OCR, which is not"
+            " wired yet - please upload a PDF, CSV or OFX statement.",
+        )
 
     db = get_db()
     tenant_id = _tenant_of(user_id)

@@ -20,9 +20,9 @@ export default function AccountSelector({ uid, value, onChange }: Props) {
   }, [uid]);
 
   function label(a: BankAccount): string {
+    if (!a.account_number) return `Unknown account (${a.txn_count})`;
     const bank = a.bank_name || 'Bank';
-    const num = a.account_number || 'unknown';
-    return `${bank} ${num} (${a.txn_count})`;
+    return `${bank} ${a.account_number} (${a.txn_count})`;
   }
 
   return (
@@ -35,7 +35,6 @@ export default function AccountSelector({ uid, value, onChange }: Props) {
         aria-label="Bank account"
       >
         <option value="">All accounts</option>
-        <option value="__unknown">Unknown account</option>
         {accounts.map((a) => (
           <option key={a.account_number || 'unknown'} value={a.account_number || '__unknown'}>
             {label(a)}

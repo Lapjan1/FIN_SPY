@@ -75,3 +75,34 @@ def test_unknown_scope_still_rejects_garbage():
         assert r.status_code == 422
     finally:
         cleanup_tenant(tenant)
+
+
+def test_bank_accounts_synthesizes_unknown_row():
+    client, tenant, h = _authed()
+    try:
+        db = get_db()
+        seed_coa(tenant, template="personal", db=db)
+        # Extractor-style placeholder row must NOT surface as an account.
+        db.execute(
+            "INSERT INTO accounts (id, tenant_id, code, name, type,"
+            " account_number, template) VALUES (?,?,?,?,?,?,?)",
+            (f"bank-{tenant}-u", tenant, "1000", "Bank U",
+             "asset", "unknown", "personal"),
+        )
+        db.execute(
+            "INSERT INTO transactions (id, tenant_id, account_id,"
+            " txn_date, description_raw, amount_minor, direction,"
+            " fingerprint_sha256, status) VALUES (?,?,?,?,?,?,?,?,?)",
+            (f"txn-{tenant}-u", tenant, f"bank-{tenant}-u",
+             "2026-10-10", "MYSTERY", -100, "debit",
+             f"fp-{tenant}-u", "proposed"),
+        )
+        db.commit()
+        r = client.get("/v1/bank-accounts", headers=h)
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 1, rows
+        assert rows[0]["account_number"] is None
+        assert rows[0]["txn_count"] == 1
+    finally:
+        cleanup_tenant(tenant)

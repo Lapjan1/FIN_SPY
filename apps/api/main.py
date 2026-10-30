@@ -743,10 +743,21 @@ def bank_accounts(user_id: int = Depends(require_login)):
         "SELECT a.account_number, MAX(d.bank_name) AS bank_name, COUNT(t.id) AS txn_count, MAX(d.uploaded_at_utc) AS last_upload"
         " FROM accounts a LEFT JOIN transactions t ON t.account_id=a.id AND t.tenant_id=a.tenant_id"
         " LEFT JOIN source_documents d ON d.account_number=a.account_number AND d.tenant_id=a.tenant_id"
-        " WHERE a.tenant_id=? AND a.account_number IS NOT NULL"
+        " WHERE a.tenant_id=? AND a.account_number IS NOT NULL AND a.account_number NOT IN ('', 'unknown')"
         " GROUP BY a.account_number ORDER BY bank_name, a.account_number",
         (tenant_id,))
-    return [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+    out = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+    # Unknown scope: rows the extractor could not attribute. Counted from
+    # transactions (the filter source of truth), not the placeholder row.
+    urow = db.execute(
+        "SELECT COUNT(*) AS n FROM transactions WHERE tenant_id=?"
+        " AND (account_number IS NULL OR account_number='')",
+        (tenant_id,)).fetchone()
+    n = urow["n"] if isinstance(urow, dict) else urow[0]
+    if n:
+        out.append({"account_number": None, "bank_name": None,
+                    "txn_count": n, "last_upload": None})
+    return out
 
 @app.get("/v1/review-queue")
 def review_queue(user_id: int = Depends(require_login)):

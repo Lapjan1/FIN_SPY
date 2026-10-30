@@ -87,6 +87,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
             # Detect opening/closing balance before header skip - per extraction test opening balance +/- amount == running balance/total
             if re.search(r'Opening Balance', text, re.I):
                 amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
                 if amounts:
                     try:
                         opening = parse_sa_amount(amounts[-1])
@@ -96,6 +97,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                         pass
             if re.search(r'Closing Balance', text, re.I):
                 amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
                 if amounts:
                     try:
                         closing = parse_sa_amount(amounts[-1])
@@ -120,6 +122,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                 # Check if amount + balance present - transaction candidate
                 # Look for two amounts in line - handle trailing minus/plus R450,00- R15 000,00+ per user consolidation question
                 amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
+                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
                 if len(amounts) >= 2:
                     # Potential transaction
                     pass
@@ -129,6 +132,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
 
             # Extract amounts - include optional trailing -/+ for SA format R450,00- R15 000,00+ per totals =/- == balance from top to bottom and bottom to top
             amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)|\d+\s*[-+]\s*$', text)
+            amounts = [a for a in amounts if any(c.isdigit() for c in a)]
             if len(amounts) < 1:
                 unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue

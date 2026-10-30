@@ -197,3 +197,25 @@ def test_period_line_never_a_row_absa():
     result = parse_absa_lines(_period_pages())
     assert result.rows == []
     assert {u["line_id"] for u in result.unaccounted_lines} == {"L001", "L002"}
+def _row_pages(line_id, text):
+    return [{
+        "page_no": 1, "width": 595, "height": 842,
+        "lines": [{"line_id": line_id, "bbox": [0, 0, 100, 10],
+                   "text": text, "text_hash": "a"}],
+    }]
+
+
+def test_row_desc_keeps_spaces_fnb():
+    result = parse_fnb_lines(
+        _row_pages("L001", "04 Jul SHOP A 206.69- 4,793.31Cr"))
+    assert len(result.rows) == 1
+    assert result.rows[0].description == "SHOP A"
+
+
+def test_row_desc_keeps_spaces_absa():
+    # ABSA documents paren-wrapped debits; bare "AMT BAL" pairs fuse
+    # in its tokenizer (logged gap, needs generic _money_tokens port).
+    result = parse_absa_lines(
+        _row_pages("L001", "04/07/2023 SHOP A (206.69) 4,793.31"))
+    assert len(result.rows) == 1
+    assert result.rows[0].description == "SHOP A"

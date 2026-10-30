@@ -47,3 +47,14 @@ account+doc columns and filters, one global picker drives the app.
 - Secret-print grep over touched backend files: 0 hits.
 - ruff unavailable in this env (`uv run` broken: pyright>=1.15
   unsatisfiable, pre-existing); tests + tsc are the gates.
+- Live-smoke catch (fixed in `bbbe977`, pinned by
+  `test_bank_accounts_synthesizes_unknown_row`, red-verified via stash):
+  extractor writes `account_number="unknown"` on the accounts row but `""`
+  on transactions, so the picker offered "unknown (93)" while the filter
+  matched 0 rows. `GET /v1/bank-accounts` now excludes the placeholder
+  and synthesizes the unknown row from transaction counts.
+- Live `c9578c4c` + web `90ab2962` (both SUCCESS): 401 unauth, 422 on bad
+  account (transactions + excel), 2 CSVs queued -> 93 txns extracted,
+  bank-accounts / __unknown filter / dashboard all agree 93, accept to
+  9999 -> Move 9999->6030 (`je-55877673`), downloaded workbook shows
+  classification columns with the moved row confirmed/6030.

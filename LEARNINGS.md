@@ -423,3 +423,39 @@ Symptom: dashboard inflow showed R100.7M and exports carried R97.9M/R2.7M fictio
 Cause: 7 product queries read transactions with no status filter, so the 12 voided fiction rows (all credits, wrong 2026 year) polluted dashboard, spy, excel, auditor-csv, powerbi, signed-pdf and chat. Auditor-csv additionally joined classifications with no latest-only guard, duplicating multi-decision txns.
 Fix: `AND status != 'rejected'` in dashboard_summary, spy_run, _wb_fetch (txns + nature), generate_auditor_csv, generate_powerbi_pack, build_report_pdf, load_txns (apps/api/main.py, reports.py, signing.py, apps/worker/spy/chat.py); auditor join now tenant-guarded + latest-decision only. Journals/evidence-pack/POPIA untouched (reversals keep books balanced, forensic bundles stay complete). tests/test_rejected_excluded.py 7. User tenant now 61 txns inflow R19,000.74 (was R100.7M).
 Applies when: any new product query over transactions - start from the rejected-excluded pattern; only forensic/POPIA surfaces read all statuses.
+
+## 2026-11-01-73 Railway CLI mangles quoted variable values; stdin in, behavior out
+Symptom: PAYSTACK_PLAN_CODES_JSON set via `variable set KEY=...` arrived quote-stripped (invalid JSON); `variable list --json` and `railway run` readback showed backslash-escaped quotes while production parsed fine.
+Cause: PowerShell native-arg quoting strips double quotes before node parses argv; CLI readback escapes on display/inject, so readback lies in both directions.
+Fix: set JSON vars via `--stdin` (single-quoted PS string, plain quotes inside); verify by app behavior (webhook mapping audit), never by CLI readback. No auto-redeploy observed after variable set - redeploy explicitly with --yes.
+Applies when: any JSON/env value via Railway CLI from PowerShell - stdin in, behavior out.
+
+## 2026-11-01-74 Probe inputs must satisfy the provider; diags must use the app's HTTP client
+Symptom: checkout 500 both plans; urllib diag got Cloudflare 403/1010 while the app (requests) got Paystack 400.
+Cause: (1) probe emails used .example TLD which Paystack rejects ("email must be a valid email"). (2) urllib's default UA trips Cloudflare browser checks; requests passes.
+Fix: probe emails on resolvable domains (test initialize sends nothing); reproduce provider errors with the same library the app uses, printing only status + provider message, never the secret.
+Applies when: any live-provider verification - match client + valid-shaped inputs, else you debug your probe, not the app.
+
+## 2026-11-01-75 Webhook user lookup order lets stale probe codes hijack users
+Symptom: second-run webhooks returned ok but the new user stayed free; audit showed the previous user updated instead.
+Cause: handle_webhook_event looks up paystack_customer_code FIRST, email second; a reused probe customer code matched the previous run's user.
+Fix: unique customer/subscription codes per probe user; per-plan users for mapping evidence.
+Applies when: any probe against lookup-by-code-then-email handlers - uniqueness per identity, always.
+
+## 2026-11-01-76 Silent config fallback made invalid JSON look half-working
+Symptom: sme webhook mapped to individual (audit), both checkouts initialized plan-less one-time transactions - no error anywhere.
+Cause: get_paystack_plans swallows JSON errors to {}; plan_key_from_paystack_code defaults unknown codes to individual; checkout sends plan:'' which Paystack accepts as non-plan.
+Fix: config fixed (stdin set + redeploy d22b06d6), both plans re-proven Paystack-side + audit. Hardening proposed, not yet implemented: loud warning/fail on unparseable PLAN_CODES_JSON.
+Applies when: any config parse with a default - invalid config must fail loudly, never degrade to plausible-but-wrong.
+
+## 2026-11-01-77 XlsxWriter totals need Enable Editing + recalc; the note must travel with the file
+Symptom: Trial/P&L/BS sheets show 0 until Enable Editing + F9; web dashboard (Python-computed) always fills.
+Cause: totals are SUMIFS formulas with cached value 0; only the spreadsheet app calculates them, and desktop apps don't always recalc on open.
+Fix: recalc note in 3 places - workbook Cover rows 6-7 (3c95772), Reports excel blurb, Help Reports block + test_cover_carries_recalc_note. Longer fix proposed: pre-computed cached values via write_formula(..., value).
+Applies when: any generated spreadsheet with formulas - never rely on the viewer calculating; note in-file + page + help.
+
+## 2026-11-01-78 Python subprocess cannot launch npm .ps1 shims
+Symptom: FileNotFoundError WinError 2 running ["railway", ...] from python though `railway` works in powershell.
+Cause: railway is railway.ps1 (npm shim); CreateProcess resolves .exe/.cmd/.bat via PATHEXT, not .ps1.
+Fix: wrap as ["powershell","-NoProfile","-Command","railway ..."], capturing stdout in-process (also keeps secrets out of logs).
+Applies when: any subprocess call to a node/npm-installed CLI on Windows.

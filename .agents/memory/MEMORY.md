@@ -30,3 +30,5 @@
 - [Books Day4] - apps/api/ledger.py post/transfer/repost/trial/suspense/reverify + classify.py suggest/decide + audit.py human-changes/verify + 10 endpoints per docs/API.md + web review page + typed api.ts client + tests 37 new + LEARNINGS 24-28
 
 - [Day4 OSS research](../../docs/DAY4_OSS_SUGGESTIONS.txt) - 11 OSS projects audited (paperless/docling/marker/MinerU/unstructured/invoice2data/PaddleOCR/beancount/firefly/ocrmypdf/actualbudget) + lessons: bbox 0-1000, SHA stage cache, fingerprint dedup, merchant memory, per-account ledger, queue fairness, requeue trap, audit hash-chain, OCR path; license map AGPL/MIT/GPL.
+
+- [Audit 2026-11-01](../../docs/HACKATHON_AUDIT.md) - score 81/100, P0 video+github-push, learnings 73-78 (railway quoting, paystack probes, webhook hijack, silent config, xlsx recalc, ps1 subprocess), billing live-proven dep d22b06d6, excel note 3c95772, law index docs/legal/references.md

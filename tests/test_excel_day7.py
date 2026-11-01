@@ -97,6 +97,20 @@ def test_workbook_12_sheets_posted_only_windowed():
         cleanup_tenant(tenant)
 
 
+def test_cover_carries_recalc_note():
+    init_db()
+    tenant = f"xl7-{uuid.uuid4().hex[:6]}"
+    try:
+        _seed(tenant)
+        out = generate_excel_workbook(tenant)
+        cover = " ".join(str(c.value or "") for row in
+                         _wb(out["file_key"])["Cover"].iter_rows(
+                             min_col=1, max_col=1) for c in row)
+        assert "Enable Editing" in cover and "F9" in cover
+    finally:
+        cleanup_tenant(tenant)
+
+
 def test_window_validation():
     init_db()
     tenant = f"xl7w-{uuid.uuid4().hex[:6]}"

@@ -18,7 +18,7 @@ const ITEMS: Item[] = [
   {
     id: 'excel',
     title: 'Excel workbook',
-    blurb: '12 sheets: trial balance, journals, accounts, flags. Opens in Excel or LibreOffice.',
+    blurb: '12 sheets: trial balance, journals, accounts, flags. Opens in Excel or LibreOffice. Totals show 0 until you Enable Editing and recalculate (F9).',
     path: (from, to) => `/v1/reports/excel${dates(from, to)}`,
     filename: 'finspy-workbook.xlsx',
     dated: true,

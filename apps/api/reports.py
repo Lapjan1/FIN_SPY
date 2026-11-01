@@ -638,6 +638,8 @@ def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data):
     ws.write(2, 0, f"Period: {from_date or '...'} to {to_date or '...'} (max 12 months)")
     ws.write(3, 0, f"Generated: {ts} UTC")
     ws.write(4, 0, "Money in minor units (cents); formulas live - edit Journal, totals follow.")
+    ws.write(5, 0, "Totals show 0? Click Enable Editing, then press F9 (Excel)")
+    ws.write(6, 0, "or Ctrl+Shift+F9 (LibreOffice) to calculate.")
     tot_d = sum(j.get("debit_minor", 0) for j in data["journal"])
     tot_c = sum(j.get("credit_minor", 0) for j in data["journal"])
     ws = wb.add_worksheet("Summary")

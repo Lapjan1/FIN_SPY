@@ -75,7 +75,7 @@ export default function HelpPage() {
           </div>
           <div className={stepCls}>
             <a href="/reports" className={`${linkCls} font-semibold`}>Reports</a>
-            <p className="text-slate-300 mt-1">Every download, regenerated from your books on each click: Excel workbook, PowerBI pack, auditor CSV, evidence pack, signed PDF, and your full POPIA data ZIP.</p>
+            <p className="text-slate-300 mt-1">Every download, regenerated from your books on each click: Excel workbook, PowerBI pack, auditor CSV, evidence pack, signed PDF, and your full POPIA data ZIP. Excel totals are live formulas: if they show 0, click Enable Editing, then press F9 (Excel) or Ctrl+Shift+F9 (LibreOffice).</p>
           </div>
           <div className={stepCls}>
             <a href="/dashboard" className={`${linkCls} font-semibold`}>Dashboard</a>

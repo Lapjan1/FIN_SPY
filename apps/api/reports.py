@@ -44,7 +44,7 @@ def generate_powerbi_pack(tenant_id: str, account_number=None) -> Dict:
     # Query star-schema views
     # fact_transactions
     _unk = account_number == "__unknown"
-    _ft = ("SELECT * FROM fact_transactions WHERE tenant_id=?" +
+    _ft = ("SELECT * FROM fact_transactions WHERE tenant_id=?" " AND status != 'rejected'" +
            (" AND (account_number IS NULL OR account_number='')" if _unk
             else (" AND account_number=?" if account_number else "")))
     cur = db.execute(_ft, (tenant_id, account_number)
@@ -465,10 +465,10 @@ def generate_auditor_csv(tenant_id: str, account_number=None) -> Dict:
                a.code as account_code, a.name as account_name, a.type as account_type, a.bank_name, a.branch_code,
                d.original_filename, d.sha256 as doc_sha256
         FROM transactions t
-        LEFT JOIN classifications c ON t.id = c.transaction_id
+        LEFT JOIN classifications c ON t.id = c.transaction_id AND c.tenant_id = t.tenant_id AND NOT EXISTS (SELECT 1 FROM classifications c2 WHERE c2.transaction_id=t.id AND c2.tenant_id=t.tenant_id AND c2.decided_at_utc > c.decided_at_utc)
         LEFT JOIN accounts a ON t.account_id = a.id
         LEFT JOIN source_documents d ON t.document_id = d.id
-        WHERE t.tenant_id=?"""
+        WHERE t.tenant_id=? AND t.status != 'rejected'"""
         + (" AND (t.account_number IS NULL OR t.account_number='')"
            if _unk else (" AND t.account_number=?" if account_number else ""))
         + """
@@ -575,7 +575,7 @@ def _wb_fetch(tenant_id: str, from_date, to_date, lim: int,
         " AND c.tenant_id=t.tenant_id AND NOT EXISTS (SELECT 1"
         " FROM classifications c2 WHERE c2.transaction_id=t.id"
         " AND c2.tenant_id=t.tenant_id AND c2.decided_at_utc > c.decided_at_utc)"
-        " WHERE t.tenant_id=?" + tq + uf +
+        " WHERE t.tenant_id=? AND t.status != 'rejected'" + tq + uf +
         " ORDER BY t.txn_date DESC LIMIT ?",
         (tenant_id, *tp, *ap, lim))
     txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
@@ -594,7 +594,7 @@ def _wb_fetch(tenant_id: str, from_date, to_date, lim: int,
         " SUM(CASE WHEN t.direction='credit' THEN t.amount_minor ELSE 0 END) as inflow,"
         " SUM(CASE WHEN t.direction='debit' THEN t.amount_minor ELSE 0 END) as outflow"
         " FROM classifications c JOIN transactions t ON c.transaction_id=t.id"
-        " WHERE t.tenant_id=?" + tq.replace("txn_date", "t.txn_date") + aq +
+        " WHERE t.tenant_id=? AND t.status != 'rejected'" + tq.replace("txn_date", "t.txn_date") + aq +
         " GROUP BY c.nature", (tenant_id, *tp, *ap))
     nature_rows = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     cur = db.execute("SELECT id, test_id, severity, result_json, created_at FROM flags"

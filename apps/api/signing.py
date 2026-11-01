@@ -48,7 +48,7 @@ def build_report_pdf(tenant_id: str, from_date: str | None, to_date: str | None,
         p.append(to_date)
     s_clause, s_params = _scope_clause("", account_number)
     cur = db.execute("SELECT amount_minor, direction, txn_date FROM transactions"
-                     " WHERE tenant_id=?" + q + s_clause,
+                     " WHERE tenant_id=? AND status != 'rejected'" + q + s_clause,
                      tuple(p) + tuple(s_params))
     txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     totals = compute_period_totals(txns)

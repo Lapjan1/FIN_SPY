@@ -1,0 +1,9 @@
+# Local-only port override: books-api (DeepSH sibling stack) owns 127.0.0.1:3000
+# on this machine, so FIN_SPY web serves on 3100 here.
+# Usage: docker compose -f ops/docker-compose.yml -f ops/docker-compose.local.yml up -d
+# .env must list BOTH origins or browser signup fails with NetworkError (CORS):
+#   WEB_ORIGIN=http://127.0.0.1:3000,http://127.0.0.1:3100
+#   APP_BASE_URL=http://127.0.0.1:3100
+services:
+  web:
+    ports: !override ["127.0.0.1:3100:3000"]

@@ -1,10 +1,13 @@
 # For local full stack - optional, MVP uses SQLite local files per AGENTS.md
 # Railway handles prod deploy per homework Part 5.14 (healthcheck /health/ready)
 # Unified dsh-local project C:\Users\dshan\Downloads\Projects\DeepSH\local-stack\docker-compose.yml owns freellmapi, 9router, books-db external volumes
-version: "3.8"
+# Local deploy: docker compose -f ops/docker-compose.yml up --build -d (from repo root)
+# Requires .env (see .env.example): DATABASE_PATH=/data/fin_spy.db, VAULT_PATH=/data/vault, WORKER_ENABLED=true
 services:
   api:
-    build: ../apps/api
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
     ports:
       - "127.0.0.1:8000:8000"
     env_file: ../.env
@@ -17,16 +20,9 @@ services:
       timeout: 10s
       retries: 3
     restart: unless-stopped
-  worker:
-    build: ../apps/worker
-    env_file: ../.env
-    volumes:
-      - ../data:/data
-      - ../logs:/logs
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
+  # No separate worker service locally: apps/worker has no Dockerfile and two
+  # containers on one SQLite file risks lock contention. WORKER_ENABLED=true
+  # runs the proven in-process worker thread (same mode as Railway FIN_SPY).
   web:
     build:
       context: ..
@@ -40,7 +36,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -59,4 +55,3 @@ services:
 # volumes:
 #   fin_spy_pgdata:
 #     external: false
-

@@ -5,6 +5,14 @@
 banks:
   FNB:
     full_name: "First National Bank"
+    table_header:
+      # Column-header vocabulary for banding (fresh FIN_SPY spec; header shapes
+      # corroborated against FNBP reference fixtures, never copied per AGENTS.md).
+      date_words: ["date"]
+      desc_words: ["description", "details", "narrative"]
+      money_words: ["amount", "debit", "credit"]
+      balance_words: ["balance"]
+      require: ["date", "balance", "mid"]  # mid = desc|money hit
     bankcodes:
       - "250655"  # Universal branch code
       - "250655"  # Example FNB branch codes vary but universal is 250655
@@ -33,6 +41,14 @@ banks:
 
   STDB:
     full_name: "Standard Bank"
+    table_header:
+      # Column-header vocabulary for banding (fresh FIN_SPY spec; header shapes
+      # corroborated against FNBP reference fixtures, never copied per AGENTS.md).
+      date_words: ["date"]
+      desc_words: ["description", "details", "narrative"]
+      money_words: ["amount", "debit", "credit"]
+      balance_words: ["balance"]
+      require: ["date", "mid"]  # mid = desc|money hit
     bankcodes:
       - "051001"  # Standard Bank universal
     deviations:
@@ -58,6 +74,14 @@ banks:
 
   ABSA:
     full_name: "Absa Bank"
+    table_header:
+      # Column-header vocabulary for banding (fresh FIN_SPY spec; header shapes
+      # corroborated against FNBP reference fixtures, never copied per AGENTS.md).
+      date_words: ["date"]
+      desc_words: ["description", "details", "narrative"]
+      money_words: ["amount", "debit", "credit"]
+      balance_words: ["balance"]
+      require: ["date", "balance", "mid"]  # mid = desc|money hit
     bankcodes:
       - "632005"  # Absa universal
     deviations:

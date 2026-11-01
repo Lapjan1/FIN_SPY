@@ -1,5 +1,6 @@
 # Dockerfile for FIN_SPY API - Railway deployment for Paystack live URL proof
 # Loopback 127.0.0.1 binding dev but 0.0.0.0 prod
+# Build context is repo root (see ops/docker-compose.yml).
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -11,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy dependency files
 COPY pyproject.toml ./
+COPY requirements.txt ./
 COPY README.md ./
 # Copy only API and worker and packages needed
 COPY apps/api ./apps/api
@@ -19,9 +21,9 @@ COPY packages ./packages
 COPY config ./config
 COPY docs ./docs
 
-# Install Python deps
+# Install Python deps - single source requirements.txt (same as Railway/nixpacks)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir fastapi uvicorn pydantic python-multipart openai python-dotenv PyMuPDF pdfplumber openpyxl XlsxWriter reportlab pyHanko cryptography pillow python-dateutil passlib[bcrypt] bcrypt psycopg2-binary requests python-multipart
+    pip install --no-cache-dir -r requirements.txt
 
 # Env
 ENV PYTHONPATH=/app

@@ -56,13 +56,14 @@ def test_bcrypt_not_sha256():
     assert verify_password("test123", legacy) is True
 
 def test_user_isolation():
-    from apps.api.db import init_db, get_db
+    from apps.api.db import init_db, get_db, cleanup_tenant
     from apps.api.auth import create_user
     init_db()
     db = get_db()
-    # Clean
-    db.execute("DELETE FROM users WHERE email IN ('a@test.com','b@test.com')")
-    db.commit()
+    # Hermetic vs a live worker: it may attach extraction_runs children to
+    # these queued fixture docs between runs, so clean children-first.
+    for _t in ("tenant-a", "tenant-b"):
+        cleanup_tenant(_t)
     try:
         uid_a = create_user("a@test.com", "pass123", "A", "tenant-a")
         uid_b = create_user("b@test.com", "pass123", "B", "tenant-b")
@@ -86,6 +87,8 @@ def test_user_isolation():
     ids = [r["id"] if isinstance(r, dict) else r[0] for r in rows]
     assert "doc-a" in ids
     assert "doc-b" not in ids
+    for _t in ("tenant-a", "tenant-b"):
+        cleanup_tenant(_t)
 
 def test_paystack_timing_safe():
     from apps.api.paystack import verify_paystack_signature
@@ -97,14 +100,12 @@ def test_paystack_timing_safe():
     assert verify_paystack_signature(payload, sig, "wrong_secret") is False
 
 def test_trial_pages():
-    from apps.api.db import init_db, get_db
+    from apps.api.db import init_db, get_db, cleanup_tenant
     from apps.api.auth import get_trial_pages_remaining, create_user, get_user
     init_db()
     db = get_db()
-    # Clean
-    db.execute("DELETE FROM users WHERE email='trial@test.com'")
-    db.execute("DELETE FROM source_documents WHERE tenant_id='trial-tenant'")
-    db.commit()
+    # Hermetic vs a live worker (see test_user_isolation).
+    cleanup_tenant("trial-tenant")
     try:
         from apps.api.auth import create_user
         uid = create_user("trial@test.com", "pass123", "Trial", "trial-tenant")
@@ -125,3 +126,4 @@ def test_trial_pages():
     db.execute("UPDATE users SET subscription_status='active' WHERE id=?", (uid,))
     db.commit()
     assert get_trial_pages_remaining(uid) is None
+    cleanup_tenant("trial-tenant")

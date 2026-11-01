@@ -7,6 +7,7 @@ import re
 from typing import List, Dict, Optional
 from decimal import Decimal
 from .base import ExtractedRow, ExtractionResult, parse_sa_amount, fingerprint_txn
+from .generic import _money_tokens as _strict_money_tokens, band_rows
 import hashlib
 
 # FNB typical line: 25 Oct | POS PURCHASE WOOLWORTHS | -450.00 | 12 340.55
@@ -81,13 +82,13 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
         pass
 
     # Simple heuristic: look for lines containing date + amount + balance + opening/closing detection per user totals =/- == balance
+    pairs = []  # (row, (line, dse, bse)) for header banding
     for page in pages:
         for line in page.get('lines', []):
             text = line['text']
             # Detect opening/closing balance before header skip - per extraction test opening balance +/- amount == running balance/total
             if re.search(r'Opening Balance', text, re.I):
-                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
-                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
+                amounts = [tok for tok, _, _ in _strict_money_tokens(text)]
                 if amounts:
                     try:
                         opening = parse_sa_amount(amounts[-1])
@@ -96,8 +97,7 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     except:
                         pass
             if re.search(r'Closing Balance', text, re.I):
-                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
-                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
+                amounts = [tok for tok, _, _ in _strict_money_tokens(text)]
                 if amounts:
                     try:
                         closing = parse_sa_amount(amounts[-1])
@@ -114,15 +114,17 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     continue
             # Try to find date
             date_match = None
+            dse = None
             for pat in DATE_PATTERNS:
-                if re.search(pat, text, re.I):
-                    date_match = re.search(pat, text, re.I)
+                m = re.search(pat, text, re.I)
+                if m:
+                    date_match = m
+                    dse = (m.start(), m.end())
                     break
             if not date_match:
                 # Check if amount + balance present - transaction candidate
                 # Look for two amounts in line - handle trailing minus/plus R450,00- R15 000,00+ per user consolidation question
-                amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)', text)
-                amounts = [a for a in amounts if any(c.isdigit() for c in a)]
+                amounts = [tok for tok, _, _ in _strict_money_tokens(text)]
                 if len(amounts) >= 2:
                     # Potential transaction
                     pass
@@ -130,25 +132,24 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue
 
-            # Extract amounts - include optional trailing -/+ for SA format R450,00- R15 000,00+ per totals =/- == balance from top to bottom and bottom to top
-            amounts = re.findall(r'R?\s*[\d\s,\.]+\s*[-+]?\s*(?:Cr|Dr)?|\(\s*[\d\s,\.]+\s*\)|\d+\s*[-+]\s*$', text)
-            amounts = [a for a in amounts if any(c.isdigit() for c in a)]
-            if len(amounts) < 1:
+            # Strict money only: bare digit runs (years, page numbers,
+            # the date's own digits) must never match as money. A bank row
+            # needs amount + balance; anything less is noise for the generic
+            # engine or human review - never a fabricated row.
+            toks = _strict_money_tokens(text)
+            amounts = [tok for tok, _, _ in toks]
+            if len(amounts) < 2:
                 unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue
+            bse = (toks[-1][1], toks[-1][2])
 
             try:
-                # Last amount is balance, second last is transaction amount?
-                # Simplified: first amount = transaction, last = balance if 2+ amounts
-                if len(amounts) >= 2:
-                    amt_raw = amounts[-2]
-                    bal_raw = amounts[-1]
-                    amount_minor = parse_sa_amount(amt_raw)
-                    balance_minor = parse_sa_amount(bal_raw)
-                else:
-                    amt_raw = amounts[0]
-                    amount_minor = parse_sa_amount(amt_raw)
-                    balance_minor = None
+                # Second-last amount is the transaction, last is the balance
+                # (the SA column standard).
+                amt_raw = amounts[-2]
+                bal_raw = amounts[-1]
+                amount_minor = parse_sa_amount(amt_raw)
+                balance_minor = parse_sa_amount(bal_raw)
 
                 date_str = normalize_date(text)
                 if not date_str:
@@ -178,10 +179,22 @@ def parse_fnb_lines(pages: List[Dict]) -> ExtractionResult:
                     balance_after_minor=abs(balance_minor) if balance_minor is not None else None,
                     source_quote=text[:500]
                 )
-                rows.append(row)
+                pairs.append((row, (line, dse, bse)))
             except Exception as e:
                 warnings.append(f"Failed parse {line['line_id']}: {e}")
                 unaccounted.append({"line_id": line['line_id'], "reason": "unreadable"})
+
+    # Header banding (per-bank vocab from banks.yaml); dropped candidates
+    # join unaccounted so page coverage stays honest.
+    rows = [row for row, _ in pairs]
+    if pairs:
+        kept, _, _ = band_rows(pages, pairs, bank="FNB")
+        kept_ids = {id(row) for row in kept}
+        for row, meta in pairs:
+            if id(row) not in kept_ids:
+                unaccounted.append({"line_id": meta[0]["line_id"],
+                                    "reason": "noise"})
+        rows = kept
 
     # Reconciliation gate per AGENTS.md: opening + sum(signed rows) = closing
     # Row-derived estimates are a FALLBACK only: stated balances are ground

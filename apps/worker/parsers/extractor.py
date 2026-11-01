@@ -35,6 +35,10 @@ def _group_words_rows(words, tol: float = 3.0) -> List[Dict]:
                      max(w[2] for w in ordered),
                      max(w[3] for w in ordered)],
             "text": " ".join(w[4] for w in ordered),
+            # Word boxes in x-order for header column banding (generic.py);
+            # text lines (CSV/TXT) carry no geometry and omit this key.
+            "words": [{"text": w[4], "x0": w[0], "x1": w[2]}
+                      for w in ordered],
         })
     return rows
 
@@ -75,7 +79,7 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
                 # Hidden-text detection per AGENTS.md: flag near-zero font size, white on white, outside visible area
                 if x0 < 0 or y0 < 0 or x1 > width+10 or y1 > height+10:
                     pass
-                lines.append({"line_id": line_id, "bbox": [x0,y0,x1,y1], "text": text, "text_hash": text_hash})
+                lines.append({"line_id": line_id, "bbox": [x0,y0,x1,y1], "text": text, "text_hash": text_hash, "words": grouped["words"]})
             pages.append({"page_no": pno+1, "width": width, "height": height, "lines": lines})
         doc.close()
         return pages
@@ -112,7 +116,8 @@ def extract_text_with_bbox(pdf_path: Path, password: Optional[str] = None) -> Li
                         line_id = f"L{line_counter:03d}"
                         line_counter += 1
                         text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-                        lines.append({"line_id": line_id, "bbox": [x0,y0,x1,y1], "text": text, "text_hash": text_hash})
+                        lines.append({"line_id": line_id, "bbox": [x0,y0,x1,y1], "text": text, "text_hash": text_hash,
+                                      "words": [{"text": w['text'], "x0": w['x0'], "x1": w['x1']} for w in wlist_sorted]})
                     pages.append({"page_no": pno+1, "width": width, "height": height, "lines": lines})
             return pages
         except Exception as e2:
@@ -239,6 +244,32 @@ def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[E
         if bank_cfg:
             # Add bank info to statement
             result.statement['bank'] = detected_bank or bank_hint
+        # Validated-beats-unvalidated: FNB proposes unsigned rows with
+        # sign-fallback directions and no chaining, so a self-inconsistent
+        # FNB result (reconciliation fails) falls through to the generic
+        # engine when it chains; FNB stands when generic cannot (recall
+        # fallback for unordered layouts). Never worse than status quo.
+        if (detected_bank == "FNB"
+                and result.opening_balance_minor is not None
+                and result.closing_balance_minor is not None):
+            from ..reconcile import run_reconciliation_gate
+            gate = run_reconciliation_gate(
+                result.opening_balance_minor,
+                result.closing_balance_minor, result.rows)
+            if not gate["overall_pass"]:
+                from .generic import parse_generic_lines
+                chained = parse_generic_lines(pages)
+                if chained is not None:
+                    print(
+                        f"deterministic: bank=FNB lines={total_lines} "
+                        f"fnb_recon_fail -> generic {len(chained.rows)} chained"
+                    )
+                    return chained
+                print(
+                    f"deterministic: bank=FNB lines={total_lines} "
+                    f"fnb_recon_fail, generic empty -> fnb {found} "
+                    "(recall fallback)"
+                )
         print(
             f"deterministic: bank={detected_bank} lines={total_lines} "
             f"{parser.__name__}={found} -> {parser.__name__}"

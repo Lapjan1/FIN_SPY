@@ -4,6 +4,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY apps/web/package.json ./
 COPY apps/web/pnpm-lock.yaml* ./
+COPY apps/web/pnpm-workspace.yaml* ./
 COPY apps/web/yarn.lock* ./
 RUN corepack enable && pnpm install --frozen-lockfile 2>/dev/null || npm install --legacy-peer-deps
 COPY apps/web/ ./

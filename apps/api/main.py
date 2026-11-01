@@ -260,6 +260,18 @@ def export_my_data(account_number: Optional[str] = None,
                         filename=f"finspy-my-data-{_safe_name(tenant_id, 'export')}.zip")
 
 
+# --- API landing (so the bare service URL explains itself instead of 404) ---
+@app.get("/")
+def index():
+    return {
+        "service": "FIN_SPY API",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health/ready",
+        "web_ui": os.getenv("APP_BASE_URL", "http://127.0.0.1:3000"),
+    }
+
+
 # --- Health with env guard ---
 @app.get("/health")
 def health():
@@ -866,7 +878,7 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
         if not cur.fetchone():
             raise HTTPException(422, f"Invalid parameters: account_number '{account_number}' does not exist for tenant. Seed COA and use an existing account.")
     # Load transactions for period (totals first)
-    q = "SELECT id, txn_date, description_raw, amount_minor, direction, account_number FROM transactions WHERE tenant_id=?"
+    q = "SELECT id, txn_date, description_raw, amount_minor, direction, account_number FROM transactions WHERE tenant_id=? AND status != 'rejected'"
     params: list = [tenant_id]
     if from_date:
         q += " AND txn_date>=?"
@@ -1024,7 +1036,7 @@ def spy_run(user_id: int = Depends(require_login)):
     tenant_id = _tenant_of(user_id)
     cur = db.execute(
         "SELECT id, txn_date, description_raw, amount_minor, direction,"
-        " fingerprint_sha256 FROM transactions WHERE tenant_id=? ORDER BY txn_date ASC",
+        " fingerprint_sha256 FROM transactions WHERE tenant_id=? AND status != 'rejected' ORDER BY txn_date ASC",
         (tenant_id,))
     txns = [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
     if not txns:

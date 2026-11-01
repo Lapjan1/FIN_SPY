@@ -21,7 +21,7 @@ def load_txns(tenant_id: str) -> List[Dict]:
     cur = db.execute(
         "SELECT id, txn_date, description_raw, amount_minor, direction,"
         " document_id, fingerprint_sha256, status FROM transactions"
-        " WHERE tenant_id=? ORDER BY txn_date DESC LIMIT 5000", (tenant_id,))
+        " WHERE tenant_id=? AND status != 'rejected' ORDER BY txn_date DESC LIMIT 5000", (tenant_id,))
     return [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
 
 

@@ -1,0 +1,23 @@
+# Shrink docker build context (was 900MB+). Build contexts are repo root.
+.git/
+.hg/
+.sl/
+.eden/
+.venv/
+.uv-cache/
+.uvcache/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+pytest-of-dshan/
+node_modules/
+apps/web/node_modules/
+apps/web/.next/
+data/vault/
+data/*.db
+data/*.db-*
+logs/
+*.bundle
+*.zip
+.env
+.fin_spy_tmp/

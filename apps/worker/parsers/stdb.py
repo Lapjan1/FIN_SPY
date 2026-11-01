@@ -6,6 +6,7 @@ import re
 from typing import List, Dict
 from .base import ExtractedRow, ExtractionResult, parse_sa_amount
 from .registry import get_bank_config
+from .generic import _money_tokens as _strict_money_tokens, band_rows
 
 DATE_PATTERNS = [
     r'(?P<year>\d{4})-(?P<mon>\d{1,2})-(?P<day>\d{1,2})',  # YYYY-MM-DD common for STDB
@@ -40,12 +41,13 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
     opening = None
     closing = None
 
+    pairs = []  # (row, (line, dse, bse)) for header banding
     for page in pages:
         for line in page.get('lines', []):
             text = line['text']
 
             if re.search(r'Opening Balance|Balance Brought Forward', text, re.I):
-                amounts = re.findall(r'R?\s*[\d,\.]+\s*(?:Cr|Dr)?', text)
+                amounts = [tok for tok, _, _ in _strict_money_tokens(text)]
                 if amounts:
                     try:
                         opening = parse_sa_amount(amounts[-1])
@@ -54,7 +56,7 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                     except:
                         pass
             if re.search(r'Closing Balance|Balance Carried Forward', text, re.I):
-                amounts = re.findall(r'R?\s*[\d,\.]+\s*(?:Cr|Dr)?', text)
+                amounts = [tok for tok, _, _ in _strict_money_tokens(text)]
                 if amounts:
                     try:
                         closing = parse_sa_amount(amounts[-1])
@@ -69,18 +71,23 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                     continue
 
             date_match = None
+            dse = None
             for pat in DATE_PATTERNS:
-                if re.search(pat, text, re.I):
+                m = re.search(pat, text, re.I)
+                if m:
                     date_match = True
+                    dse = (m.start(), m.end())
                     break
             if not date_match:
                 unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue
 
-            amounts = re.findall(r'R?\s*[\d,\.]+\s*(?:Cr|Dr)?', text)
+            toks = _strict_money_tokens(text)
+            amounts = [tok for tok, _, _ in toks]
             if len(amounts) < 1:
                 unaccounted.append({"line_id": line['line_id'], "reason": "noise"})
                 continue
+            bse = None
 
             try:
                 if len(amounts) >= 2:
@@ -88,8 +95,10 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                     bal_raw = amounts[-1]
                     amount_minor = parse_sa_amount(amt_raw)
                     balance_minor = parse_sa_amount(bal_raw)
+                    bse = (toks[-1][1], toks[-1][2])
                 else:
-                    amount_minor = parse_sa_amount(amounts[0])
+                    amt_raw = amounts[0]
+                    amount_minor = parse_sa_amount(amt_raw)
                     balance_minor = None
 
                 date_str = normalize_date_stdb(text)
@@ -108,7 +117,7 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                 if re.search(r'\bDr\b', amt_raw, re.I):
                     direction = "debit"
 
-                rows.append(ExtractedRow(
+                pairs.append((ExtractedRow(
                     line_ids=[line['line_id']],
                     date=date_str,
                     description=desc,
@@ -116,10 +125,22 @@ def parse_stdb_lines(pages: List[Dict]) -> ExtractionResult:
                     direction=direction,
                     balance_after_minor=abs(balance_minor) if balance_minor else None,
                     source_quote=text[:500]
-                ))
+                ), (line, dse, bse)))
             except Exception as e:
                 warnings.append(f"Failed parse {line['line_id']}: {e}")
                 unaccounted.append({"line_id": line['line_id'], "reason": "unreadable"})
+
+    # Header banding (per-bank vocab from banks.yaml); dropped candidates
+    # join unaccounted so page coverage stays honest.
+    rows = [row for row, _ in pairs]
+    if pairs:
+        kept, _, _ = band_rows(pages, pairs, bank="STDB")
+        kept_ids = {id(row) for row in kept}
+        for row, meta in pairs:
+            if id(row) not in kept_ids:
+                unaccounted.append({"line_id": meta[0]["line_id"],
+                                    "reason": "noise"})
+        rows = kept
 
     return ExtractionResult(
         statement={"bank":"STDB","account_mask":None,"period_start":None,"period_end":None,"currency":"ZAR","opening_balance":str(opening/100) if opening else None,"closing_balance":str(closing/100) if closing else None},

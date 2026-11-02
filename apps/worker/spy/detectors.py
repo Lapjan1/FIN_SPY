@@ -92,7 +92,7 @@ def _longest_run(txns: List[Dict]) -> List[Dict]:
 
 def detect_duplicate(transactions: List[Dict]) -> List[Dict]:
     """
-    fingerprint SHA256(date|amount|desc_norm) same -> exact duplicate.
+    fingerprint SHA256(date|amount|desc|balance) same -> exact duplicate.
     Same amount + same normalized desc within 1 calendar day but different
     fingerprint -> 24h near-duplicate.
     """

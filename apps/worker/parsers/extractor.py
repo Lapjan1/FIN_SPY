@@ -258,7 +258,7 @@ def deterministic_parse(pages: List[Dict], bank_hint: str = "FNB") -> Optional[E
                 result.closing_balance_minor, result.rows)
             if not gate["overall_pass"]:
                 from .generic import parse_generic_lines
-                chained = parse_generic_lines(pages)
+                chained = parse_generic_lines(pages, bank=detected_bank)
                 if chained is not None:
                     print(
                         f"deterministic: bank=FNB lines={total_lines} "
@@ -441,7 +441,11 @@ def extract_document(pdf_path: Path, bank_hint: str = "FNB", password: Optional[
     result = deterministic_parse(pages, bank_hint)
     if result is None:
         from .generic import parse_generic_lines
-        result = parse_generic_lines(pages)
+        from .registry import detect_bank_from_text
+        _all_text = " ".join(
+            line["text"] for page in pages for line in page["lines"])
+        result = parse_generic_lines(
+            pages, bank=detect_bank_from_text(_all_text))
     if result is None:
         # LLM fallback
         result = llm_fallback(pages, tenant_id=tenant_id)
@@ -588,7 +592,8 @@ def persist_to_db(result: ExtractionResult, document_id: str, tenant_id: str, ru
     skipped_ids: list = []
     for row in result.rows:
         txn_id = f"txn-{uuid.uuid4().hex[:8]}"
-        fp = fingerprint_txn(row.date, row.amount_minor, row.description)
+        fp = fingerprint_txn(row.date, row.amount_minor, row.description,
+                             row.balance_after_minor)
         if not account_number:
             # Unknown account: scope the fingerprint to this document so
             # identical rows (debit orders) in another unknown-account

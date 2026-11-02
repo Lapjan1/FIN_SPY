@@ -534,6 +534,17 @@ def _validate_window(from_date: str | None, to_date: str | None) -> None:
             raise ValueError("Invalid parameters: window exceeds 12 months")
 
 
+def _rands(minor) -> float:
+    """Display helper: int cents -> rands. Storage stays minor ints."""
+    return (minor or 0) / 100
+
+
+def _rands_or_blank(minor):
+    if minor in (None, ""):
+        return ""
+    return minor / 100
+
+
 def _wb_fetch(tenant_id: str, from_date, to_date, lim: int,
               account_number=None) -> Dict:
     db = get_db()
@@ -609,15 +620,19 @@ def _wb_fetch(tenant_id: str, from_date, to_date, lim: int,
             "flags": flags, "docs": docs}
 
 
-def _wb_dump(ws, rows, headers, bold):
+def _wb_dump(ws, rows, headers, bold, money=(), money_fmt=None):
     for c, h in enumerate(headers):
         ws.write(0, c, h, bold)
     for ri, row in enumerate(rows, start=1):
         for ci, h in enumerate(headers):
-            ws.write(ri, ci, row.get(h, ""))
+            v = row.get(h, "")
+            if money_fmt is not None and h in money and isinstance(v, (int, float)):
+                ws.write(ri, ci, v, money_fmt)
+            else:
+                ws.write(ri, ci, v)
 
 
-def _wb_section(ws, start_row: int, title: str, codes):
+def _wb_section(ws, start_row: int, title: str, codes, money_fmt=None):
     """Account block with live SUMIFS debit/credit per code. Returns the
     0-based row after the last item (where the caller writes its total)."""
     ws.write(start_row, 0, title)
@@ -625,45 +640,48 @@ def _wb_section(ws, start_row: int, title: str, codes):
     for code, name in codes:
         ws.write(r, 0, code)
         ws.write(r, 1, name)
-        ws.write_formula(r, 2, f"=SUMIFS(Journal!F:F,Journal!D:D,\"{code}\")")
-        ws.write_formula(r, 3, f"=SUMIFS(Journal!G:G,Journal!D:D,\"{code}\")")
+        ws.write_formula(r, 2, f"=SUMIFS(Journal!F:F,Journal!D:D,\"{code}\")", money_fmt)
+        ws.write_formula(r, 3, f"=SUMIFS(Journal!G:G,Journal!D:D,\"{code}\")", money_fmt)
         r += 1
     return r
 
 
-def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data):
+def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money_fmt=None):
     ws = wb.add_worksheet("Cover")
     ws.write(0, 0, "FIN_SPY Workbook", bold)
     ws.write(1, 0, f"Tenant: {tenant_id}")
     ws.write(2, 0, f"Period: {from_date or '...'} to {to_date or '...'} (max 12 months)")
     ws.write(3, 0, f"Generated: {ts} UTC")
-    ws.write(4, 0, "Money in minor units (cents); formulas live - edit Journal, totals follow.")
+    ws.write(4, 0, "Money in rands (R, 2 decimals); formulas live - edit Journal, totals follow.")
     ws.write(5, 0, "Totals show 0? Click Enable Editing, then press F9 (Excel)")
     ws.write(6, 0, "or Ctrl+Shift+F9 (LibreOffice) to calculate.")
-    tot_d = sum(j.get("debit_minor", 0) for j in data["journal"])
-    tot_c = sum(j.get("credit_minor", 0) for j in data["journal"])
+    tot_d = _rands(sum(j.get("debit_minor", 0) for j in data["journal"]))
+    tot_c = _rands(sum(j.get("credit_minor", 0) for j in data["journal"]))
     ws = wb.add_worksheet("Summary")
     for ri, (k, v) in enumerate([
         ("Period from", from_date or ""), ("Period to", to_date or ""),
         ("Journal lines", len(data["journal"])),
         ("Journal lines truncated", "yes" if data["jl_count"] > 5000 else "no"),
         ("Transactions", len(data["txns"])),
-        ("Debits (minor)", tot_d), ("Credits (minor)", tot_c),
+        ("Debits (R)", tot_d), ("Credits (R)", tot_c),
         ("Balanced", "yes" if tot_d == tot_c else "NO"),
         ("Accounts", len(data["accounts"])), ("Flags", len(data["flags"])),
         ("Documents", len(data["docs"])),
     ]):
         ws.write(ri, 0, k, bold)
-        ws.write(ri, 1, v)
+        if money_fmt is not None and k in ("Debits (R)", "Credits (R)"):
+            ws.write(ri, 1, v, money_fmt)
+        else:
+            ws.write(ri, 1, v)
 
 
-def _wb_txns_journal(wb, bold, data):
+def _wb_txns_journal(wb, bold, data, money_fmt=None):
     ws = wb.add_worksheet("Transactions")
     _wb_dump(ws, [{"id": t.get("id", ""), "txn_date": t.get("txn_date", ""),
                    "description": t.get("description_raw", ""),
-                   "amount_minor": t.get("amount_minor", 0),
+                   "amount": _rands(t.get("amount_minor", 0)),
                    "direction": t.get("direction", ""),
-                   "balance_after": t.get("balance_after_minor", ""),
+                   "balance_after": _rands_or_blank(t.get("balance_after_minor", "")),
                    "account_number": t.get("account_number", ""),
                    "document": t.get("original_filename", "") or t.get("document_id", ""),
                    "nature": t.get("nature", "") or "unclassified",
@@ -672,21 +690,21 @@ def _wb_txns_journal(wb, bold, data):
                    "status": t.get("status", ""),
                    "fingerprint": t.get("fingerprint_sha256", ""),
                    "document_id": t.get("document_id", "")} for t in data["txns"]],
-             ["id", "txn_date", "description", "amount_minor", "direction",
+             ["id", "txn_date", "description", "amount", "direction",
               "balance_after", "account_number", "document", "nature",
               "category", "rationale", "status", "fingerprint",
-              "document_id"], bold)
+              "document_id"], bold, money=("amount", "balance_after"), money_fmt=money_fmt)
     ws = wb.add_worksheet("Journal")
     _wb_dump(ws, [{"entry_id": j.get("id", ""), "entry_date": j.get("entry_date", ""),
                    "memo": j.get("memo", ""), "account_code": j.get("code", ""),
                    "account_name": j.get("name", ""),
-                   "debit": j.get("debit_minor", 0),
-                   "credit": j.get("credit_minor", 0)} for j in data["journal"]],
+                   "debit": _rands(j.get("debit_minor", 0)),
+                   "credit": _rands(j.get("credit_minor", 0))} for j in data["journal"]],
              ["entry_id", "entry_date", "memo", "account_code", "account_name",
-              "debit", "credit"], bold)
+              "debit", "credit"], bold, money=("debit", "credit"), money_fmt=money_fmt)
 
 
-def _wb_trial(wb, bold, accounts):
+def _wb_trial(wb, bold, accounts, money_fmt=None):
     ws = wb.add_worksheet("Trial_Balance")
     for c, h in enumerate(["Code", "Name", "Type", "Debit", "Credit", "Net (D-C)"]):
         ws.write(0, c, h, bold)
@@ -695,79 +713,80 @@ def _wb_trial(wb, bold, accounts):
         ws.write(ri, 1, a.get("name", ""))
         ws.write(ri, 2, a.get("type", ""))
         xl = ri + 1  # 1-based row of this account
-        ws.write_formula(ri, 3, f"=SUMIFS(Journal!F:F,Journal!D:D,Trial_Balance!A{xl})")
-        ws.write_formula(ri, 4, f"=SUMIFS(Journal!G:G,Journal!D:D,Trial_Balance!A{xl})")
-        ws.write_formula(ri, 5, f"=D{xl}-E{xl}")
+        ws.write_formula(ri, 3, f"=SUMIFS(Journal!F:F,Journal!D:D,Trial_Balance!A{xl})", money_fmt)
+        ws.write_formula(ri, 4, f"=SUMIFS(Journal!G:G,Journal!D:D,Trial_Balance!A{xl})", money_fmt)
+        ws.write_formula(ri, 5, f"=D{xl}-E{xl}", money_fmt)
     tr = len(accounts) + 1  # 0-based TOTAL row
     ws.write(tr, 0, "TOTAL", bold)
-    ws.write_formula(tr, 3, f"=SUM(D2:D{tr})")
-    ws.write_formula(tr, 4, f"=SUM(E2:E{tr})")
-    ws.write_formula(tr, 5, f"=D{tr + 1}-E{tr + 1}")
+    ws.write_formula(tr, 3, f"=SUM(D2:D{tr})", money_fmt)
+    ws.write_formula(tr, 4, f"=SUM(E2:E{tr})", money_fmt)
+    ws.write_formula(tr, 5, f"=D{tr + 1}-E{tr + 1}", money_fmt)
     ws.write(tr + 1, 0, "Balanced?", bold)
     ws.write_formula(tr + 1, 3, f'=IF(D{tr + 1}=E{tr + 1},"yes","NO")')
 
 
-def _wb_pnl(wb, bold, accounts) -> int:
+def _wb_pnl(wb, bold, accounts, money_fmt=None) -> int:
     """Income statement. Returns the xl row of NET PROFIT for BS linking."""
     ws = wb.add_worksheet("Income_Statement")
     for c, h in enumerate(["Code", "Name", "Debit", "Credit"]):
         ws.write(0, c, h, bold)
     inc = [(a["code"], a["name"]) for a in accounts if a.get("type") == "income"]
     exp = [(a["code"], a["name"]) for a in accounts if a.get("type") == "expense"]
-    r = _wb_section(ws, 1, "INCOME", inc)
+    r = _wb_section(ws, 1, "INCOME", inc, money_fmt)
     inc_total = r + 1  # xl row of income total (items xl 3..inc_total-1)
     ws.write(r, 0, "Income total (C-D)", bold)
     if inc:
-        ws.write_formula(r, 3, f"=SUM(D3:D{inc_total - 1})-SUM(C3:C{inc_total - 1})")
+        ws.write_formula(r, 3, f"=SUM(D3:D{inc_total - 1})-SUM(C3:C{inc_total - 1})", money_fmt)
     else:
-        ws.write(r, 3, 0)
-    r = _wb_section(ws, r + 2, "EXPENSE", exp)
+        ws.write(r, 3, 0, money_fmt)
+    r = _wb_section(ws, r + 2, "EXPENSE", exp, money_fmt)
     exp_total = r + 1  # xl row (items xl exp_total-len(exp)..exp_total-1)
     ws.write(r, 0, "Expense total (D-C)", bold)
     if exp:
         first = exp_total - len(exp)
-        ws.write_formula(r, 2, f"=SUM(C{first}:C{exp_total - 1})-SUM(D{first}:D{exp_total - 1})")
+        ws.write_formula(r, 2, f"=SUM(C{first}:C{exp_total - 1})-SUM(D{first}:D{exp_total - 1})", money_fmt)
     else:
-        ws.write(r, 2, 0)
+        ws.write(r, 2, 0, money_fmt)
     ws.write(r + 1, 0, "NET PROFIT", bold)
-    ws.write_formula(r + 1, 3, f"=D{inc_total}-C{exp_total}")
+    ws.write_formula(r + 1, 3, f"=D{inc_total}-C{exp_total}", money_fmt)
     return r + 2  # xl row of NET PROFIT
 
 
-def _wb_bs(wb, bold, accounts, pnl_net_xl: int):
+def _wb_bs(wb, bold, accounts, pnl_net_xl: int, money_fmt=None):
     ws = wb.add_worksheet("Balance_Sheet")
     for c, h in enumerate(["Code", "Name", "Debit", "Credit"]):
         ws.write(0, c, h, bold)
     ast = [(a["code"], a["name"]) for a in accounts if a.get("type") == "asset"]
     leq = [(a["code"], a["name"]) for a in accounts if a.get("type") in ("liability", "equity")]
-    r = _wb_section(ws, 1, "ASSETS", ast)
+    r = _wb_section(ws, 1, "ASSETS", ast, money_fmt)
     ast_total = r + 1  # xl row (items xl 3..ast_total-1)
     ws.write(r, 0, "Assets total (D-C)", bold)
     if ast:
-        ws.write_formula(r, 2, f"=SUM(C3:C{ast_total - 1})-SUM(D3:D{ast_total - 1})")
+        ws.write_formula(r, 2, f"=SUM(C3:C{ast_total - 1})-SUM(D3:D{ast_total - 1})", money_fmt)
     else:
-        ws.write(r, 2, 0)
-    r = _wb_section(ws, r + 2, "LIABILITIES + EQUITY", leq)
+        ws.write(r, 2, 0, money_fmt)
+    r = _wb_section(ws, r + 2, "LIABILITIES + EQUITY", leq, money_fmt)
     leq_total = r + 1  # xl row (items xl leq_total-len(leq)..leq_total-1)
     ws.write(r, 0, "L+E total (C-D)", bold)
     if leq:
         first = leq_total - len(leq)
-        ws.write_formula(r, 3, f"=SUM(D{first}:D{leq_total - 1})-SUM(C{first}:C{leq_total - 1})")
+        ws.write_formula(r, 3, f"=SUM(D{first}:D{leq_total - 1})-SUM(C{first}:C{leq_total - 1})", money_fmt)
     else:
-        ws.write(r, 3, 0)
+        ws.write(r, 3, 0, money_fmt)
     ws.write(r + 1, 0, "Current earnings (P&L)", bold)
-    ws.write_formula(r + 1, 3, f"='Income_Statement'!D{pnl_net_xl}")
+    ws.write_formula(r + 1, 3, f"='Income_Statement'!D{pnl_net_xl}", money_fmt)
     ws.write(r + 2, 0, "BALANCED?", bold)
     ws.write_formula(r + 2, 2, f'=IF(C{ast_total}=D{leq_total}+D{r + 2},"yes","NO")')
 
 
-def _wb_misc(wb, bold, data):
+def _wb_misc(wb, bold, data, money_fmt=None):
     ws = wb.add_worksheet("Private_vs_Business")
     _wb_dump(ws, [{"nature": n.get("nature", ""), "count": n.get("n", 0),
-                   "inflow_minor": n.get("inflow", 0),
-                   "outflow_minor": n.get("outflow", 0)}
+                   "inflow": _rands(n.get("inflow", 0)),
+                   "outflow": _rands(n.get("outflow", 0))}
                   for n in data["nature_rows"]],
-             ["nature", "count", "inflow_minor", "outflow_minor"], bold)
+             ["nature", "count", "inflow", "outflow"], bold,
+             money=("inflow", "outflow"), money_fmt=money_fmt)
     ws = wb.add_worksheet("Flags")
     _wb_dump(ws, [{"id": f.get("id", ""), "test": f.get("test_id", ""),
                    "severity": f.get("severity", ""),
@@ -783,7 +802,7 @@ def _wb_misc(wb, bold, data):
     ws = wb.add_worksheet("Method_Notes")
     for ri, line in enumerate([
         "DB-first: Extract -> persist with line IDs + bbox -> all products read DB.",
-        "Money in minor units (cents); live SUMIFS recompute from Journal.",
+        "Money in rands (minor/100, 2 decimals); live SUMIFS recompute from Journal.",
         "Posted entries only (posted=1). Window capped at 12 months.",
         "9999 Suspense is type expense: it lands on P&L until re-decoded via Move.",
         "Mixed classification exceptional (startup/sole-prop); see DISCLAIMER.md.",
@@ -791,7 +810,7 @@ def _wb_misc(wb, bold, data):
         ws.write(ri, 0, line)
     ws = wb.add_worksheet("Dictionary")
     for ri, (col, meaning) in enumerate([
-        ("minor", "Integer cents, never float."),
+        ("rands", "Display unit: DB minor cents / 100, 2 decimals."),
         ("debit/credit", "Journal legs; debits must equal credits per entry."),
         ("nature", "private | business | mixed | unknown."),
         ("business_pct", "0-100 share of business use for mixed rows."),
@@ -810,7 +829,7 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
     Cover, Summary, Transactions, Journal, Trial_Balance (totals all codes,
     live SUMIFS), Income_Statement, Balance_Sheet, Private_vs_Business,
     Flags, Source_Register, Method_Notes, Dictionary.
-    Money in minor ints; posted entries only (posted=1).
+    Money in rands (display); posted entries only (posted=1).
     """
     import xlsxwriter
 
@@ -820,12 +839,13 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
     data = _wb_fetch(tenant_id, from_date, to_date, 5000, account_number)
     wb = xlsxwriter.Workbook(str(excel_path))
     bold = wb.add_format({"bold": True})
-    _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data)
-    _wb_txns_journal(wb, bold, data)
-    _wb_trial(wb, bold, data["accounts"])
-    pnl_net_xl = _wb_pnl(wb, bold, data["accounts"])
-    _wb_bs(wb, bold, data["accounts"], pnl_net_xl)
-    _wb_misc(wb, bold, data)
+    money = wb.add_format({"num_format": "#,##0.00"})
+    _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money)
+    _wb_txns_journal(wb, bold, data, money)
+    _wb_trial(wb, bold, data["accounts"], money)
+    pnl_net_xl = _wb_pnl(wb, bold, data["accounts"], money)
+    _wb_bs(wb, bold, data["accounts"], pnl_net_xl, money)
+    _wb_misc(wb, bold, data, money)
     wb.close()
     return {"file_key": str(excel_path), "sha256": _sha256_file(excel_path),
             "from_date": from_date, "to_date": to_date,

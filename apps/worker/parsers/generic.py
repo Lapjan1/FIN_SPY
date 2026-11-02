@@ -271,14 +271,42 @@ def _strip_spans(text: str, spans: List[Tuple[int, int]]) -> str:
     return " ".join(text.split())
 
 
-def _first_money(text: str) -> Optional[int]:
+_BARE_MONEY_MARK_RE = re.compile(r"[Cc][Rr]\b|[Dd][Rr]\b|[-+()]")
+
+
+def _is_bare_money_token(tok: str) -> bool:
+    """No explicit sign: no Cr/Dr suffix, no +/-, no parens."""
+    return _BARE_MONEY_MARK_RE.search(tok) is None
+
+
+def _bare_dr_rule(bank: Optional[str]) -> bool:
+    """Bare-means-Dr convention from banks.yaml (fail-closed False).
+
+    FNB-only: FNB never prints +/- (Cr = credit, bare = debit);
+    every other bank keeps plain positives. Structural opt-in
+    per bank, never an if-bank hack at the call site.
+    """
+    if not bank:
+        return False
+    try:
+        from .registry import get_bank_config
+        dev = (get_bank_config(bank) or {}).get("deviations", {})
+        return dev.get("bare_means_dr") is True
+    except Exception:
+        return False
+
+
+def _first_money(text: str, bare_dr: bool = False) -> Optional[int]:
     toks = _money_tokens(text)
     if not toks:
         return None
     try:
-        return abs(parse_sa_amount(toks[0][0]))
+        value = abs(parse_sa_amount(toks[0][0]))
     except ValueError:
         return None
+    if bare_dr and _is_bare_money_token(toks[0][0]):
+        return -value
+    return value
 
 
 # Columnarity gate: x-zones only bind when balances sit in a right-aligned
@@ -356,17 +384,307 @@ def band_rows(pages: List[Dict], pairs: List,
     return kept, header, True
 
 
+_CHAIN_TOLERANCE_MINOR = 100  # match the gate's R1.00
+
+
+def _candidate_pairs(toks, bare_dr: bool = False):
+    """(amount, balance, tok_idx) readings for a token list, best-first.
+
+    Default is the SA column standard (second-last, last); 3+ token
+    lines also try the middle pair (trailing fragments); space-grouped
+    amounts also try the ref-split (last group only). Chaining
+    validates - the balance arbitrates which reading is real.
+    """
+    pairs = []
+    for i in range(len(toks) - 2, -1, -1):
+        try:
+            amount = abs(parse_sa_amount(toks[i][0]))
+            balance = parse_sa_amount(toks[i + 1][0])
+            if bare_dr and balance > 0 \
+                    and _is_bare_money_token(toks[i + 1][0]):
+                balance = -balance
+        except ValueError:
+            continue
+        pairs.append((amount, balance, i))
+        _head, sep, tail = toks[i][0].rpartition(" ")
+        if sep:
+            try:
+                pairs.append((abs(parse_sa_amount(tail)), balance, i))
+            except ValueError:
+                pass
+    return pairs
+
+
+def _row_desc(text, toks, i):
+    """Description: line minus the chosen pair + date spans."""
+    spans = [(toks[i][1], toks[i][2]), (toks[i + 1][1], toks[i + 1][2])]
+    for _, rx in _DATE_RES:
+        dm = rx.search(text)
+        if dm:
+            spans.append((dm.start(), dm.end()))
+            break
+    return _strip_spans(text, spans) or "Unknown"
+
+
+_DIRECTION_HINTS = (
+    ("app payment to", "debit"),
+    ("app payment from", "credit"),
+    ("prepaid airtime", "debit"),
+)
+
+
+def _direction_hint(text):
+    """Money-flow direction prior from description patterns.
+
+    App payments are bidirectional (To = money out, From = money in);
+    the hardcoded books used this from/to logic to disambiguate.
+    Chaining decides; hints validate and gate token re-signing.
+    """
+    low = (text or "").lower()
+    for needle, direction in _DIRECTION_HINTS:
+        if needle in low:
+            return direction
+    return None
+
+
+def _link_direction(base, amount, balance, hint=None, allow_resign=True):
+    """(direction, diff, signed_balance) linking base to balance.
+
+    Plain readings (R1.00 tolerance) win; when none link, an exact
+    overdraft re-sign (negative balance whose marker the PDF lost,
+    e.g. red print) is accepted iff the money-flow hint agrees or
+    is absent. Settled rows re-link plain-only (allow_resign=False).
+    """
+    options = []
+    for direction, want in (("debit", base - amount),
+                            ("credit", base + amount)):
+        diff = abs(want - balance)
+        if diff <= _CHAIN_TOLERANCE_MINOR:
+            options.append((diff, 0, direction, balance))
+    if allow_resign and not options and balance > 0:
+        for direction, want in (("debit", base - amount),
+                                ("credit", base + amount)):
+            if want == -balance and (hint is None or hint == direction):
+                options.append((0, 1, direction, -balance))
+    if not options:
+        return None
+    diff, _resigned, direction, bal = min(options)
+    return direction, diff, bal
+
+
+def _conflict_note(c, direction):
+    hint = _direction_hint(c["text"])
+    if hint is not None and hint != direction:
+        return (f"Direction hint conflict at {c['line_id']}:"
+                f" hint {hint}, chained {direction}")
+    return None
+
+
+def _refusal_note(cand, base, hint):
+    for _rank, (amount, balance, _i) in enumerate(cand["pairs"]):
+        hit = _link_direction(base, amount, balance, None)
+        if hit is None:
+            continue
+        direction, _diff, bal = hit
+        if bal < 0 <= balance:
+            return (f"Unchained {cand['line_id']}: resign to"
+                    f" {direction} refused by direction hint ({hint})")
+    return None
+
+
+def _link_from(cand, base, prev_date):
+    """Best ((pair rank, direction, signed balance) or None, notes).
+
+    Default pairs win same-line ties; date violations never link;
+    re-signs refused by a conflicting money-flow hint are noted.
+    """
+    hint = _direction_hint(cand["text"])
+    if prev_date is not None and cand["date"] < prev_date:
+        return None, []
+    best = None
+    for rank, (amount, balance, _i) in enumerate(cand["pairs"]):
+        hit = _link_direction(base, amount, balance, hint)
+        if hit is None:
+            continue
+        direction, diff, bal = hit
+        key = (diff, rank)
+        if best is None or key < best[0]:
+            best = (key, rank, direction, bal)
+    if best is not None:
+        _key, rank, direction, bal = best
+        return (rank, direction, bal), []
+    notes = []
+    if hint is not None:
+        note = _refusal_note(cand, base, hint)
+        if note is not None:
+            notes.append(note)
+    return None, notes
+
+
+def _emit(c, rank, direction, bal):
+    _amount, _balance, i = c["pairs"][rank]
+    return ExtractedRow(
+        line_ids=[c["line_id"]],
+        date=c["date"],
+        description=_row_desc(c["text"], c["toks"], i),
+        amount_minor=c["pairs"][rank][0],
+        direction=direction,
+        balance_after_minor=bal,
+        source_quote=c["quote"],
+    )
+
+
+def _slot_fits(pbal, pdate, c, qrow, qamt, qbal):
+    """Pair rank placing c between P and settled Q, else None."""
+    if not (pdate <= c["date"] <= qrow.date):
+        return None
+    hint = _direction_hint(c["text"])
+    for rank, (amount, balance, _i) in enumerate(c["pairs"]):
+        xhit = _link_direction(pbal, amount, balance, hint)
+        if xhit is None:
+            continue
+        _xdir, _xdiff, xbal = xhit
+        if _link_direction(xbal, qamt, qbal, None, False) is None:
+            continue
+        return rank
+    return None
+
+
+def _insert_at(rows, leftover, c, rank, pos, base, warnings):
+    amount, balance, _i = c["pairs"][rank]
+    hint = _direction_hint(c["text"])
+    direction, _diff, bal = _link_direction(base, amount, balance, hint)
+    rows.insert(pos, (_emit(c, rank, direction, bal), c, rank))
+    note = _conflict_note(c, direction)
+    if note is not None:
+        warnings.append(note)
+    leftover.remove(c)
+
+
+def _try_place(rows, leftover, c, opening, warnings):
+    """Slot one leftover into the chain (both sides link, dates fit)."""
+    for s in range(len(rows) - 1):
+        p = rows[s][0]
+        qrow, qcand, qrk = rows[s + 1]
+        rank = _slot_fits(p.balance_after_minor, p.date, c, qrow,
+                          qcand["pairs"][qrk][0], qrow.balance_after_minor)
+        if rank is not None:
+            _insert_at(rows, leftover, c, rank, s + 1,
+                       p.balance_after_minor, warnings)
+            return True
+    last = rows[-1][0]
+    link, _notes = _link_from(c, last.balance_after_minor, last.date)
+    if link is not None:
+        rank, direction, bal = link
+        rows.append((_emit(c, rank, direction, bal), c, rank))
+        note = _conflict_note(c, direction)
+        if note is not None:
+            warnings.append(note)
+        leftover.remove(c)
+        return True
+    first, fcand, frk = rows[0]
+    if opening is not None and c["date"] <= first.date:
+        hint = _direction_hint(c["text"])
+        famt = fcand["pairs"][frk][0]
+        fbal = first.balance_after_minor
+        for rank, (amount, balance, _i) in enumerate(c["pairs"]):
+            xhit = _link_direction(opening, amount, balance, hint)
+            if xhit is None:
+                continue
+            _xdir, _xdiff, xbal = xhit
+            if _link_direction(xbal, famt, fbal, None, False) is None:
+                continue
+            _insert_at(rows, leftover, c, rank, 0, opening, warnings)
+            return True
+    return False
+
+
+def _gap_fill(rows, leftover, opening, warnings):
+    """Place leftovers into chain slots to a fixpoint."""
+    progressed = True
+    while progressed and leftover and rows:
+        progressed = False
+        for c in list(leftover):
+            if _try_place(rows, leftover, c, opening, warnings):
+                progressed = True
+
+
+def _chain_candidates(cands, opening):
+    """Sequential chaining plus balance-indexed gap-fill (user row rules).
+
+    Pass 1 walks line order: each row must balance-link within R1.00
+    on a non-decreasing date; refusals resync balances as before but
+    keep the last good date. Pass 2 inserts leftovers into chain
+    slots (both sides linked, dates fitting) or appends/prepends
+    them, to a fixpoint. Leftovers are reported unchained with
+    per-row warnings, never dropped silent.
+    Returns (rows, leftover_ids, warnings).
+    """
+    rows = []  # (ExtractedRow, cand, rank)
+    leftover = []
+    refused = set()
+    warnings = []
+    base = opening
+    prev_date = None
+    for c in cands:
+        if base is None:
+            base = c["pairs"][0][1]
+            prev_date = c["date"]
+            leftover.append(c)
+            continue
+        link, notes = _link_from(c, base, prev_date)
+        for note in notes:
+            warnings.append(note)
+            refused.add(c["line_id"])
+        if link is None:
+            base = c["pairs"][0][1]
+            leftover.append(c)
+            continue
+        rank, direction, bal = link
+        rows.append((_emit(c, rank, direction, bal), c, rank))
+        note = _conflict_note(c, direction)
+        if note is not None:
+            warnings.append(note)
+        base, prev_date = bal, c["date"]
+    _gap_fill(rows, leftover, opening, warnings)
+    out = [r for r, _c, _rk in rows]
+    left_ids = [c["line_id"] for c in leftover]
+    final_base = rows[-1][0].balance_after_minor if rows else None
+    final_date = rows[-1][0].date if rows else None
+    for c in leftover:
+        if c["line_id"] in refused:
+            continue
+        _a0, _b0, _i0 = c["pairs"][0]
+        warnings.append(
+            f"Unchained {c['line_id']} ({c['date']} amount {_a0}"
+            f" balance {_b0}): no balance link")
+        if final_base is None or final_date is None:
+            continue
+        if not c["date"] < final_date:
+            continue
+        for amount, balance, _i in c["pairs"]:
+            if _link_direction(final_base, amount, balance) is not None:
+                warnings.append(
+                    f"Date order break at {c['line_id']} ({c['date']}"
+                    f" before {final_date})")
+                break
+    return out, left_ids, warnings
+
+
 def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
-                        coverage: float = 0.5) -> Optional[ExtractionResult]:
+                        coverage: float = 0.5,
+                        bank: Optional[str] = None) -> Optional[ExtractionResult]:
     """Generic extraction with running-balance chaining.
 
     Returns None below bar (caller falls through to the LLM last resort).
     Prints counts-only diagnostics like the bank-gated path.
+    bank selects per-bank conventions (FNB bare-Dr) from banks.yaml.
     """
     total_lines = sum(len(p.get("lines", [])) for p in pages)
     flat = [(p.get("page_no", 1), line)
             for p in pages for line in p.get("lines", [])]
     period_year, period_end_month = _period_context(pages)
+    bare_dr = _bare_dr_rule(bank)
 
     opening = closing = None
     account_number = None
@@ -376,9 +694,9 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
         if opening is None and ("opening balance" in low
                                 or "balance forward" in low
                                 or "balance brought" in low):
-            opening = _first_money(text)
+            opening = _first_money(text, bare_dr)
         if "closing balance" in low or "balance carried" in low:
-            closing = _first_money(text)
+            closing = _first_money(text, bare_dr)
         if account_number is None and "account" in low:
             m = re.search(r"\b(\d[\d ]{7,12}\d)\b", text)
             if m:
@@ -399,21 +717,12 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
         toks = _money_tokens(text)
         if len(toks) < 2:
             continue  # v1 needs amount + balance to chain
-        try:
-            amount = abs(parse_sa_amount(toks[-2][0]))
-            balance = parse_sa_amount(toks[-1][0])
-        except ValueError:
+        pairs = _candidate_pairs(toks, bare_dr)
+        if not pairs:
             continue
-        spans = [(toks[-2][1], toks[-2][2]), (toks[-1][1], toks[-1][2])]
-        for _, rx in _DATE_RES:
-            dm = rx.search(text)
-            if dm:
-                spans.append((dm.start(), dm.end()))
-                break
-        desc = _strip_spans(text, spans) or "Unknown"
         candidates.append({
-            "line_id": line["line_id"], "date": date, "desc": desc,
-            "amount": amount, "balance": balance,
+            "line_id": line["line_id"], "date": date, "text": text,
+            "toks": toks, "pairs": pairs,
             "quote": line.get("text", "")[:200],
         })
         metas.append((line, (dstart, dend),
@@ -421,38 +730,12 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
 
     # Header banding: x-zones on columnar tables only (order-free).
     candidates, header, columnar = band_rows(
-        pages, list(zip(candidates, metas)))
+        pages, list(zip(candidates, metas)), bank=bank)
 
-    rows = []
-    kept = 0
-    prev_bal: Optional[int] = None
-    for i, cand in enumerate(candidates):
-        base = None
-        if i == 0 and opening is not None:
-            base = opening
-        elif prev_bal is not None:
-            base = prev_bal
-        direction = None
-        if base is not None:
-            if base - cand["amount"] == cand["balance"]:
-                direction = "debit"
-            elif base + cand["amount"] == cand["balance"]:
-                direction = "credit"
-        if direction is not None:
-            kept += 1
-            rows.append(ExtractedRow(
-                line_ids=[cand["line_id"]],
-                date=cand["date"],
-                description=cand["desc"],
-                amount_minor=cand["amount"],
-                direction=direction,
-                balance_after_minor=cand["balance"],
-                source_quote=cand["quote"],
-            ))
-        if cand["balance"] is not None:
-            prev_bal = cand["balance"]
+    rows, leftover_ids, chain_warnings = _chain_candidates(
+        candidates, opening)
 
-    chained, total_cands = kept, len(candidates)
+    chained, total_cands = len(rows), len(candidates)
     if header is None:
         hdr = "hdr=-"
     else:
@@ -462,8 +745,11 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
         print(f"generic: lines={total_lines} cands={total_cands} "
               f"chained={chained} {hdr} -> generic")
         row_ids = {r.line_ids[0] for r in rows}
+        leftover = set(leftover_ids)
         unaccounted = [
-            {"line_id": line["line_id"], "reason": "noise"}
+            {"line_id": line["line_id"],
+             "reason": "unchained" if line["line_id"] in leftover
+             else "noise"}
             for _, line in flat if line["line_id"] not in row_ids
         ]
         return ExtractionResult(
@@ -473,7 +759,7 @@ def parse_generic_lines(pages: List[Dict], min_rows: int = 3,
                        "closing_balance": None},
             rows=rows,
             unaccounted_lines=unaccounted,
-            warnings=[],
+            warnings=chain_warnings,
             opening_balance_minor=opening,
             closing_balance_minor=closing,
         )

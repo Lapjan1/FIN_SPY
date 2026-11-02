@@ -95,12 +95,29 @@ def check_duplicate_fingerprints(rows: List[ExtractedRow]) -> Tuple[bool, List[D
     seen = {}
     dups = []
     for row in rows:
-        fp = fingerprint_txn(row.date, row.amount_minor, row.description)
+        fp = fingerprint_txn(row.date, row.amount_minor, row.description,
+                             row.balance_after_minor)
         if fp in seen:
             dups.append({"type": "exact_duplicate", "line_ids": row.line_ids, "dup_of": seen[fp], "fingerprint": fp})
         else:
             seen[fp] = row.line_ids
     return (len(dups) == 0), dups
+
+def check_date_order(rows: List[ExtractedRow]) -> Tuple[bool, List[str]]:
+    """
+    User row rule: top-to-bottom, date == previous date or later.
+    Emission order is not chronological on column PDFs, so breaks are
+    review flags reported by the gate, never acceptance failures.
+    """
+    breaks = []
+    prev = None
+    for row in rows:
+        if prev is not None and row.date < prev[0]:
+            breaks.append(
+                f"Row {row.line_ids} date break: {row.date} before"
+                f" {prev[0]} ({prev[1]})")
+        prev = (row.date, row.line_ids)
+    return (len(breaks) == 0), breaks
 
 def run_reconciliation_gate(opening_minor: int, closing_minor: int, rows: List[ExtractedRow]) -> Dict:
     """
@@ -129,7 +146,13 @@ def run_reconciliation_gate(opening_minor: int, closing_minor: int, rows: List[E
     dup_pass, dup_list = check_duplicate_fingerprints(rows)
     results["duplicates"] = {"pass": dup_pass, "duplicates": dup_list}
 
+    # Date order (user row rule): reported, never acceptance - column-PDF
+    # emission order is not chronological, balances accept, dates flag.
+    do_pass, do_breaks = check_date_order(rows)
+    results["date_order"] = {"pass": do_pass, "breaks": do_breaks}
+
     # Overall - all four balance checks + duplicates must pass
+    # (date_order excluded by design: see above)
     overall_pass = oc_pass and oc_rev_pass and rb_pass and rb_rev_pass and dup_pass
     results["overall_pass"] = overall_pass
     results["status"] = "pass" if overall_pass else "fail"

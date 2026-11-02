@@ -37,7 +37,7 @@ FIN_SPY = Financial Surveillance & Peak Insights: upload any SA bank PDF, trace 
 
 ## Conventions that differ
 - All tables have tenant_id + RLS/isolation guard. Append-only audit_log with prev_hash/row_hash SHA256(prev||canonical_json).
-- Transaction fingerprint = SHA256(date|amount|desc_norm) for dedup.
+- Transaction fingerprint = SHA256(date|amount|desc|balance) for dedup.
 - Line-ID grounding: LLM gets Lxxx numbered lines + bbox, must return line_ids + source_quote exact match.
 - Prompts versioned in prompts/*.md with SHA256 header. Never embed prompt text in code.
 

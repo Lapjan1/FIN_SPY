@@ -15,24 +15,26 @@ def create_statement_pdf(path: Path):
         import pymupdf
         doc = pymupdf.open()
         page = doc.new_page(width=595, height=842)  # A4
-        # FNB-like statement
+        # FNB statement - realistic: Cr = credit, bare = debit, no +/-
         lines = [
             "FNB Statement - Account 123456789 - Branch 250655",
             "Period: 01 Oct 2026 to 31 Oct 2026",
-            "Opening Balance: R12 340.55",
+            "Opening Balance: R12 340,55Cr",
             "Date       Description                    Amount      Balance",
-            "25 Oct 2026  WOOLWORTHS CT   R450,00-  R11 890,55",
-            "26 Oct 2026  RENT - DEBNAM PROPERTY  R5 000,00-  R6 890,55",
-            "27 Oct 2026  SALARY - ABC CORP  R15 000,00+  R21 890,55",
-            "28 Oct 2026  SHELL FUEL  R800,00-  R21 090,55",
-            "29 Oct 2026  VODACOM  R300,00-  R20 790,55",
-            "Closing Balance: R20 790,55",
+            "25 Oct 2026  WOOLWORTHS CT   R450,00  R11 890,55Cr",
+            "26 Oct 2026  RENT - DEBNAM PROPERTY  R5 000,00  R6 890,55Cr",
+            "27 Oct 2026  SALARY - ABC CORP  R15 000,00Cr  R21 890,55Cr",
+            "28 Oct 2026  SHELL FUEL  R800,00  R21 090,55Cr",
+            "29 Oct 2026  VODACOM  R300,00  R20 790,55Cr",
+            "Closing Balance: R20 790,55Cr",
             "Page 1 of 1",
         ]
-        y = 750
+        # PyMuPDF uses a top-left origin (reportlab below is
+        # bottom-left): start near the top, step downward.
+        y = 92
         for line in lines:
             page.insert_text((50, y), line, fontsize=10)
-            y -= 20
+            y += 20
         doc.save(str(path))
         doc.close()
         return True
@@ -42,17 +44,18 @@ def create_statement_pdf(path: Path):
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import A4
             c = canvas.Canvas(str(path), pagesize=A4)
+            # FNB statement - realistic: Cr = credit, bare = debit, no +/-
             lines = [
                 "FNB Statement - Account 123456789 - Branch 250655",
                 "Period: 01 Oct 2026 to 31 Oct 2026",
-                "Opening Balance: R12 340.55",
+                "Opening Balance: R12 340,55Cr",
                 "Date       Description                    Amount      Balance",
-                "25 Oct 2026  WOOLWORTHS CT   R450,00-  R11 890,55",
-                "26 Oct 2026  RENT - DEBNAM PROPERTY  R5 000,00-  R6 890,55",
-                "27 Oct 2026  SALARY - ABC CORP  R15 000,00+  R21 890,55",
-                "28 Oct 2026  SHELL FUEL  R800,00-  R21 090,55",
-                "29 Oct 2026  VODACOM  R300,00-  R20 790,55",
-                "Closing Balance: R20 790,55",
+                "25 Oct 2026  WOOLWORTHS CT   R450,00  R11 890,55Cr",
+                "26 Oct 2026  RENT - DEBNAM PROPERTY  R5 000,00  R6 890,55Cr",
+                "27 Oct 2026  SALARY - ABC CORP  R15 000,00Cr  R21 890,55Cr",
+                "28 Oct 2026  SHELL FUEL  R800,00  R21 090,55Cr",
+                "29 Oct 2026  VODACOM  R300,00  R20 790,55Cr",
+                "Closing Balance: R20 790,55Cr",
                 "Page 1 of 1",
             ]
             y = 750

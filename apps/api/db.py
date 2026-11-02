@@ -721,6 +721,86 @@ def _ensure_dedup_index(db: DbHandle):
             )
 
 
+def migrate_fingerprints_add_balance(db=None) -> dict:
+    """One-shot data migration: fingerprint gains balance_after.
+
+    Old canonical date|amount|desc -> new date|amount|desc|balance so
+    same-day repeat payments (different running balances) stop
+    colliding at persist. Only rows still on the old canonical form
+    are rewritten (fixture/random fingerprints untouched); rows that
+    would collide post-migration keep their old fp + loud warning.
+    Marker short-circuits repeat runs; canonical guard keeps it
+    idempotent with or without the marker.
+    """
+    db = db if db is not None else get_db()
+    try:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY,"
+            " applied_at TEXT)")
+    except Exception:
+        pass
+    try:
+        done = db.execute("SELECT name FROM schema_migrations"
+                          " WHERE name='fp_add_balance'").fetchone()
+    except Exception:
+        done = None
+    if done:
+        return {"migrated": 0, "skipped": 0, "already": True}
+    import hashlib
+    from datetime import datetime, timezone
+    from apps.worker.parsers.base import fingerprint_txn
+    rows = db.execute(
+        "SELECT id, tenant_id, account_number, txn_date, description_raw,"
+        " amount_minor, balance_after_minor, fingerprint_sha256"
+        " FROM transactions").fetchall()
+    todo = []
+    for r in rows:
+        d = dict(r) if not isinstance(r, dict) else r
+        old = hashlib.sha256(
+            f"{d.get('txn_date')}|{d.get('amount_minor')}"
+            f"|{(d.get('description_raw') or '').lower().strip()}".encode()
+        ).hexdigest()
+        if d.get("fingerprint_sha256") != old:
+            continue  # new-scheme already, or fixture value: untouched
+        new = fingerprint_txn(d.get("txn_date"), d.get("amount_minor"),
+                              d.get("description_raw") or "",
+                              d.get("balance_after_minor"))
+        todo.append((d, new))
+    groups = {}
+    for d, new in todo:
+        groups.setdefault((d.get("tenant_id"), d.get("account_number"),
+                           new), []).append(d)
+    migrated = skipped = 0
+    for d, new in todo:
+        if len(groups[(d.get("tenant_id"), d.get("account_number"),
+                       new)]) > 1:
+            skipped += 1
+            print(f"WARN: fp migration skips {d.get('id')}"
+                  " (post-migration collision within account)")
+            continue
+        try:
+            db.execute("UPDATE transactions SET fingerprint_sha256=?"
+                       " WHERE id=?", (new, d.get("id")))
+        except Exception as e:
+            skipped += 1
+            print(f"WARN: fp migration skips {d.get('id')} ({e})")
+            continue
+        migrated += 1
+    if skipped == 0:
+        try:
+            db.execute("INSERT INTO schema_migrations (name, applied_at)"
+                       " VALUES (?,?)",
+                       ("fp_add_balance",
+                        datetime.now(timezone.utc).isoformat()))
+        except Exception:
+            pass
+    try:
+        db.commit()
+    except Exception:
+        pass
+    return {"migrated": migrated, "skipped": skipped, "already": False}
+
+
 def _doc_index_cols(db, index_name):
     rows = db.execute(f"PRAGMA index_info({index_name})").fetchall()
     return [(c["name"] if isinstance(c, dict) else c[2]) for c in rows]
@@ -1016,6 +1096,7 @@ def _ensure_indexes(db: DbHandle):
             pass
 
     _ensure_dedup_index(db)
+    migrate_fingerprints_add_balance(db)
     _ensure_doc_tenant_sha_unique(db)
     _ensure_span_dims(db)
 

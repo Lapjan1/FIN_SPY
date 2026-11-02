@@ -127,7 +127,8 @@ def process_one_document(doc_id: str, tenant_id: str, sha256: str, storage_key: 
             _effective = _asserted or _extracted
             if _effective and result.rows:
                 _fps = [fingerprint_txn(r.date, r.amount_minor,
-                                        r.description)
+                                        r.description,
+                                        r.balance_after_minor)
                         for r in result.rows]
                 _near, _why = is_near_duplicate_transactions(
                     _fps, tenant_id, db, 0.8, _effective)

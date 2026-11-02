@@ -123,7 +123,7 @@ def is_duplicate_file(sha256: str, tenant_id: str, db) -> Tuple[bool, str]:
 
 def is_near_duplicate_transactions(new_fingerprints: List[str], tenant_id: str, db, threshold: float = 0.8, account_number: str = None) -> Tuple[bool, List[str]]:
     """
-    Near-duplicate via transaction fingerprints SHA256(date|amount|desc_norm)
+    Near-duplicate via transaction fingerprints SHA256(date|amount|desc|balance)
     If >80% fingerprints overlap with existing transactions, likely duplicate file with different name
     """
     if not new_fingerprints:

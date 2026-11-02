@@ -22,11 +22,11 @@ def _pages(*texts):
 def test_fnb_recon_fail_generic_chains_wins():
     pages = _pages(
         "First National Bank Statement Account 62123456789",
-        "Opening Balance: R1 000,00",
-        "25 Oct 2026 SHOP A 100.00 900.00",
-        "26 Oct 2026 PAY B 50.00 950.00",
-        "27 Oct 2026 SHOP C 200.00 750.00",
-        "Closing Balance: R750,00",
+        "Opening Balance: R1 000,00Cr",
+        "25 Oct 2026 SHOP A 100.00 900.00Cr",
+        "26 Oct 2026 PAY B 50.00 950.00Cr",
+        "27 Oct 2026 SHOP C 200.00 750.00Cr",
+        "Closing Balance: R750,00Cr",
     )
     result = deterministic_parse(pages, bank_hint="FNB")
     assert result is not None

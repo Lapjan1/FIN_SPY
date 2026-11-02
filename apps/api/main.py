@@ -190,9 +190,10 @@ VAULT_PATH = Path(os.getenv("VAULT_PATH", "./data/vault"))
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
-def fingerprint_txn(date: str, amount_minor: int, desc_norm: str) -> str:
-    canonical = f"{date}|{amount_minor}|{desc_norm.lower().strip()}"
-    return hashlib.sha256(canonical.encode()).hexdigest()
+def fingerprint_txn(date: str, amount_minor: int, desc_norm: str,
+                    balance_after_minor=None) -> str:
+    from apps.worker.parsers.base import fingerprint_txn as _fp
+    return _fp(date, amount_minor, desc_norm, balance_after_minor)
 
 # --- Auth Routes ---
 @app.post("/v1/auth/register")
@@ -2172,6 +2173,7 @@ def _apply_txn_updates(
             updates.get("txn_date", txn.get("txn_date")),
             updates.get("amount_minor", txn.get("amount_minor")),
             updates.get("description_raw", txn.get("description_raw") or ""),
+            txn.get("balance_after_minor"),
         )
         set_clause = ", ".join(f"{k}=?" for k in updates) + ", fingerprint_sha256=?"
         params: list = list(updates.values()) + [new_fp, txn_id]

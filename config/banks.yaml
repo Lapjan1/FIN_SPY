@@ -22,15 +22,16 @@ banks:
         - "2026/10/25"   # YYYY/MM/DD
         - "25-10-2026"   # DD-MM-YYYY
       amount_patterns:
-        - "R450,00-"    # Trailing minus with comma decimal and space thousands
-        - "R15 000,00+" # Trailing plus with space thousands
+        - "21 735.74Cr" # Cr suffix = credit (+)
+        - "300.00"      # Bare = debit (Dr never shown)
         - "R1 234,56"   # Space thousands comma decimal
-        - "(450.00)"    # Parentheses negative
-      trailing_minus: true
-      trailing_plus: true
+        - "R1 000,00Cr" # R prefix + Cr
+      trailing_minus: false  # FNB never prints +/- (mandate 2026-11-02)
+      trailing_plus: false
       comma_decimal: true
       space_thousands: true
-      cr_dr_suffix: false
+      cr_dr_suffix: true  # Cr = credit; bare = debit (Dr never shown)
+      bare_means_dr: true
       parentheses_negative: false
       opening_keywords: ["Opening Balance"]
       closing_keywords: ["Closing Balance"]

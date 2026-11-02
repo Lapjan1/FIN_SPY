@@ -24,27 +24,27 @@ h2 { color: #38bdf8; }
 </head>
 <body>
 <h1>FIN_SPY - Statement and Extraction Side by Side</h1>
-<p>PDF: statement.pdf | Is Bank Statement: True Confidence: 100% | Reasons: mime/extension application/pdf/statement.pdf likely bank statement, Found 8 bank keywords, Found 3 SA bank patterns</p>
+<p>PDF: statement.pdf | Is Bank Statement: True Confidence: 100% | Reasons: mime/extension application/pdf/statement.pdf likely bank statement, Found 9 bank keywords, Found 3 SA bank patterns</p>
 <div class="container">
 <div class="left">
 <h2>📄 Original Statement (Left) - Line-ID Grounding</h2>
 <p>Every line has Lxxx ID + bbox for traceability per AGENTS.md</p>
-<h3>Page 1 - 595.0x842.0</h3><div class='line'><span class='line-id'>L001</span> <span class='bbox'>[50,739,293,753]</span> FNB Statement - Account 123456789 - Branch 250655</div>
-<div class='line'><span class='line-id'>L002</span> <span class='bbox'>[50,719,207,733]</span> Period: 01 Oct 2026 to 31 Oct 2026</div>
-<div class='line'><span class='line-id'>L003</span> <span class='bbox'>[50,699,184,713]</span> Opening Balance: R12 340.55</div>
-<div class='line'><span class='line-id'>L004</span> <span class='bbox'>[50,679,283,693]</span> Date Description Amount Balance</div>
-<div class='line'><span class='line-id'>L005</span> <span class='bbox'>[50,659,308,673]</span> 25 Oct 2026 WOOLWORTHS CT R450,00- R11 890,55</div>
-<div class='line'><span class='line-id'>L006</span> <span class='bbox'>[50,639,353,653]</span> 26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00- R6 890,55</div>
-<div class='line'><span class='line-id'>L007</span> <span class='bbox'>[50,619,331,633]</span> 27 Oct 2026 SALARY - ABC CORP R15 000,00+ R21 890,55</div>
-<div class='line'><span class='line-id'>L008</span> <span class='bbox'>[50,599,274,613]</span> 28 Oct 2026 SHELL FUEL R800,00- R21 090,55</div>
-<div class='line'><span class='line-id'>L009</span> <span class='bbox'>[50,579,266,593]</span> 29 Oct 2026 VODACOM R300,00- R20 790,55</div>
-<div class='line'><span class='line-id'>L010</span> <span class='bbox'>[50,559,180,573]</span> Closing Balance: R20 790,55</div>
-<div class='line'><span class='line-id'>L011</span> <span class='bbox'>[50,539,101,553]</span> Page 1 of 1</div>
+<h3>Page 1 - 595.0x842.0</h3><div class='line'><span class='line-id'>L001</span> <span class='bbox'>[50,81,293,95]</span> FNB Statement - Account 123456789 - Branch 250655</div>
+<div class='line'><span class='line-id'>L002</span> <span class='bbox'>[50,101,207,115]</span> Period: 01 Oct 2026 to 31 Oct 2026</div>
+<div class='line'><span class='line-id'>L003</span> <span class='bbox'>[50,121,195,135]</span> Opening Balance: R12 340,55Cr</div>
+<div class='line'><span class='line-id'>L004</span> <span class='bbox'>[50,141,283,155]</span> Date Description Amount Balance</div>
+<div class='line'><span class='line-id'>L005</span> <span class='bbox'>[50,161,315,175]</span> 25 Oct 2026 WOOLWORTHS CT R450,00 R11 890,55Cr</div>
+<div class='line'><span class='line-id'>L006</span> <span class='bbox'>[50,181,361,195]</span> 26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00 R6 890,55Cr</div>
+<div class='line'><span class='line-id'>L007</span> <span class='bbox'>[50,201,346,215]</span> 27 Oct 2026 SALARY - ABC CORP R15 000,00Cr R21 890,55Cr</div>
+<div class='line'><span class='line-id'>L008</span> <span class='bbox'>[50,221,281,235]</span> 28 Oct 2026 SHELL FUEL R800,00 R21 090,55Cr</div>
+<div class='line'><span class='line-id'>L009</span> <span class='bbox'>[50,241,273,255]</span> 29 Oct 2026 VODACOM R300,00 R20 790,55Cr</div>
+<div class='line'><span class='line-id'>L010</span> <span class='bbox'>[50,261,190,275]</span> Closing Balance: R20 790,55Cr</div>
+<div class='line'><span class='line-id'>L011</span> <span class='bbox'>[50,281,101,295]</span> Page 1 of 1</div>
 
 </div>
 <div class="right">
 <h2>🔍 Extraction (Right) - DB-first</h2>
-<p>Statement: {'bank': 'FNB', 'account_mask': None, 'period_start': None, 'period_end': None, 'currency': 'ZAR', 'opening_balance': '12340.55', 'closing_balance': '20790.55'}</p>
+<p>Statement: {'bank': 'GENERIC', 'account_number': '123456789', 'period_start': None, 'period_end': None, 'currency': 'ZAR', 'opening_balance': None, 'closing_balance': None}</p>
 <p>Opening: 1234055 Closing: 2079055 Warnings: []</p>
 
 <h3>Reconciliation Gate - Totals +/- == Balance Top->Bottom + Bottom->Top</h3>
@@ -62,43 +62,43 @@ h2 { color: #38bdf8; }
 <h3>Extracted Transactions - Each cites line_ids + source_quote</h3>
 
 <div class='transaction'>
-  <div><span class='line-id'>L005</span> <strong>2026-10-25</strong> WOOLWORTHSCTR450,00-R11890,55 <span class='debit'>R450.00 debit</span> Balance: R11890.55</div>
-  <div class='bbox'>Source Quote: "25 Oct 2026 WOOLWORTHS CT R450,00- R11 890,55"</div>
-  <div>Fingerprint: 67db7e01e5d0c94a... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L005</span> <strong>2026-10-25</strong> WOOLWORTHS CT <span class='debit'>R450.00 debit</span> Balance: R11890.55</div>
+  <div class='bbox'>Source Quote: "25 Oct 2026 WOOLWORTHS CT R450,00 R11 890,55Cr"</div>
+  <div>Fingerprint: c50b99e5c3fab830... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <div class='transaction'>
-  <div><span class='line-id'>L006</span> <strong>2026-10-26</strong> RENTDEBNAMPROPERTYR5000,00-R6890,55 <span class='debit'>R5000.00 debit</span> Balance: R6890.55</div>
-  <div class='bbox'>Source Quote: "26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00- R6 890,55"</div>
-  <div>Fingerprint: a48c408b2412d0d7... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L006</span> <strong>2026-10-26</strong> RENT - DEBNAM PROPERTY <span class='debit'>R5000.00 debit</span> Balance: R6890.55</div>
+  <div class='bbox'>Source Quote: "26 Oct 2026 RENT - DEBNAM PROPERTY R5 000,00 R6 890,55Cr"</div>
+  <div>Fingerprint: 4c27aa32f2a80367... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <div class='transaction'>
-  <div><span class='line-id'>L007</span> <strong>2026-10-27</strong> SALARYABCCORPR15000,00+R21890,55 <span class='credit'>R15000.00 credit</span> Balance: R21890.55</div>
-  <div class='bbox'>Source Quote: "27 Oct 2026 SALARY - ABC CORP R15 000,00+ R21 890,55"</div>
-  <div>Fingerprint: 897c5b34137b8b2e... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L007</span> <strong>2026-10-27</strong> SALARY - ABC CORP <span class='credit'>R15000.00 credit</span> Balance: R21890.55</div>
+  <div class='bbox'>Source Quote: "27 Oct 2026 SALARY - ABC CORP R15 000,00Cr R21 890,55Cr"</div>
+  <div>Fingerprint: e04a7c4dd6277361... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <div class='transaction'>
-  <div><span class='line-id'>L008</span> <strong>2026-10-28</strong> SHELLFUELR800,00-R21090,55 <span class='debit'>R800.00 debit</span> Balance: R21090.55</div>
-  <div class='bbox'>Source Quote: "28 Oct 2026 SHELL FUEL R800,00- R21 090,55"</div>
-  <div>Fingerprint: 97b16b1fd0688daa... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L008</span> <strong>2026-10-28</strong> SHELL FUEL <span class='debit'>R800.00 debit</span> Balance: R21090.55</div>
+  <div class='bbox'>Source Quote: "28 Oct 2026 SHELL FUEL R800,00 R21 090,55Cr"</div>
+  <div>Fingerprint: 085d1ac2ddb59baf... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <div class='transaction'>
-  <div><span class='line-id'>L009</span> <strong>2026-10-29</strong> VODACOMR300,00-R20790,55 <span class='debit'>R300.00 debit</span> Balance: R20790.55</div>
-  <div class='bbox'>Source Quote: "29 Oct 2026 VODACOM R300,00- R20 790,55"</div>
-  <div>Fingerprint: 5a661e21ed7330a0... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
+  <div><span class='line-id'>L009</span> <strong>2026-10-29</strong> VODACOM <span class='debit'>R300.00 debit</span> Balance: R20790.55</div>
+  <div class='bbox'>Source Quote: "29 Oct 2026 VODACOM R300,00 R20 790,55Cr"</div>
+  <div>Fingerprint: 9e60a854753a13f9... (SHA256 date|amount|desc_norm per AGENTS.md)</div>
 </div>
 
 <h3>Unaccounted Lines</h3>
 <ul>
-<li>L001: header</li>
-<li>L002: header</li>
-<li>L003: opening_balance</li>
-<li>L004: header</li>
-<li>L010: closing_balance</li>
-<li>L011: header</li>
+<li>L001: noise</li>
+<li>L002: noise</li>
+<li>L003: noise</li>
+<li>L004: noise</li>
+<li>L010: noise</li>
+<li>L011: noise</li>
 </ul>
 </div>
 </div>

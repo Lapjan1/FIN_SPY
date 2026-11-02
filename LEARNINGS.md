@@ -459,3 +459,39 @@ Symptom: FileNotFoundError WinError 2 running ["railway", ...] from python thoug
 Cause: railway is railway.ps1 (npm shim); CreateProcess resolves .exe/.cmd/.bat via PATHEXT, not .ps1.
 Fix: wrap as ["powershell","-NoProfile","-Command","railway ..."], capturing stdout in-process (also keeps secrets out of logs).
 Applies when: any subprocess call to a node/npm-installed CLI on Windows.
+
+## 2026-11-02-79 Fingerprint must include running balance
+Symptom: Same-day repeat payments (two R110 debit orders, different running balances) collapsed at persist - 2 of 68 statement rows silently eaten.
+Cause: fingerprint = SHA256(date|amount|desc) has no balance; identical date+amount+desc pairs collide.
+Fix: Canonical date|amount|desc|balance_after (base.py + main.py wrapper + all call sites), big-bang migration recomputing stored fps (old-canonical guard: fixture/random fps untouched; post-migration collisions skip+warn, never delete). AGENTS.md formula updated.
+Applies when: Any content-hash dedup on repeated real-world events - include the sequence discriminator.
+
+## 2026-11-02-80 Pure order-free chaining poisons on spurious exact links
+Symptom: Balance-indexed greedy chaining chained 23/68 on the real statement (vs 63 sequential) - one spurious exact link derailed the whole chain.
+Cause: Global candidate choice maximizes ambiguity surface; line order carries real signal (mostly chronological).
+Fix: Sequential pass in line order (pair-pick, R1.00 tolerance, date non-decreasing, balance resync on refusal) + gap-fill pass inserting leftovers into chain slots (both sides linked, dates fitting) to a fixpoint. Leftovers -> unaccounted "unchained" + per-row warning, never silent.
+Applies when: Chaining/sequencing extraction rows - keep emission order primary, order-free only as rescue.
+
+## 2026-11-02-81 Sandbox sqlite CANTOPEN flakes are environmental, verify by rerun
+Symptom: sqlite3.OperationalError "unable to open database file" on plain INSERTs, crash row moving between runs (row 0, then row 14), identical inputs green-then-red.
+Cause: This box's sandboxed filesystem layer flaking on SQLite WAL writes (same family as the WinError 10013 socket blocks); pre-existing on pristine tree.
+Fix: Do not chase code - rerun to confirm non-determinism, verify product paths via the committed suite (258 green here, CI green), note honest caveat. Single shared get_db() handle; no second raw connections in one process.
+Applies when: Any sqlite write failure on this Windows sandbox that suite-green code cannot explain.
+
+## 2026-11-02-82 Overdraft balances lose their sign in text extraction
+Symptom: 2 statement rows unplaceable + 2 flipped (R150/R35 debits read as credits) - FNB renders overdraft balances unsigned in text (likely red print), so -51.14 reads as 51.14.
+Cause: Chaining assumed non-negative balances; unsigned tokens of negative balances neither link nor match any base.
+Fix: Signed-balance chaining: exact-only overdraft re-sign (base-a==-b) gated by money-flow direction hints (App Payment To=debit, From=credit, airtime=debit); hint conflicts refuse re-signs and warn; plain links stand. 68/68 + gate pass, statement totals exact.
+Applies when: Chaining running balances on statements that dip into overdraft.
+
+## 2026-11-02-83 FNB bare-means-Dr is a per-bank config rule, not a parser default
+Symptom: Generic signed every bare balance positive, but real FNB prints no +/- at all: `Cr` = credit (+), bare = debit (Dr never shown). A global bare-negative flip would corrupt STDB/ABSA (plain positives) and contradict the STDB explicit-Dr/Cr convention.
+Cause: Sign convention lived as an implicit parser assumption (parse_sa_amount bare -> +ve, _first_money abs) instead of bank-owned data; banks.yaml even encoded the inverse (FNB trailing_minus true, cr_dr_suffix false).
+Fix: Structural opt-in: banks.yaml deviations gain bare_means_dr (FNB true, rest absent) + truth-fixed flags; generic negates bare balance tokens at exactly 2 token sites (_candidate_pairs, _first_money) when the rule resolves, amounts stay magnitudes; bank threads detected-or-hint into both generic call sites (unclaimed docs detect-only, never inherit the FNB default hint). Verified FNB-scoped by G7b (STDB/None legacy) + idempotent live re-extract (persist 0/skipped 68).
+Applies when: Any bank-specific reading convention - put the key in banks.yaml deviations, resolve fail-closed, prove scoping with a cross-bank test.
+
+## 2026-11-02-84 Synthetic PDF builders must match their library's y-origin
+Symptom: Realistic-Cr synthetic chained 0/5 in generic (below bar) while the same rows hand-built chain 5/5; extractor returned L001 = "Page 1 of 1".
+Cause: show_side_by_side.py's PyMuPDF branch used y=750-descending (bottom-left assumption) but PyMuPDF insert_text uses a top-left origin, so the page stacked inverted; the reportlab branch (bottom-left, correct) masked it whenever it ran. The extractor's ascending-y grouping is top-first-correct - it faithfully returned the inverted page bottom-up.
+Fix: PyMuPDF branch y=92-ascending + origin comment; golden#1 (recon pass over deterministic_parse) is the regression test - it fails on inverted streams. Always probe L001/LAST text after regenerating a fixture PDF.
+Applies when: Generating or regenerating any PDF fixture - verify visual order, never assume the author's y-origin.

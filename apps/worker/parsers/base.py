@@ -51,15 +51,17 @@ def parse_sa_amount(raw: str) -> int:
         negative = True
         s = s[1:-1]
     # Handle trailing + and - and Cr/Dr per SA formats R450,00- R15 000,00+ Cr/Dr
-    if s.endswith('-') or s.endswith('Dr') or s.endswith('DR'):
+    # Case-insensitive (pdf text varies: Dr/DR/dr); slice exact chars,
+    # never rstrip charsets.
+    if s.endswith('-') or s[-2:].lower() == 'dr':
         negative = True
-        s = s.rstrip('-').rstrip('Dr').rstrip('DR').strip()
+        s = s[:-2].strip() if s[-2:].lower() == 'dr' else s[:-1].strip()
         s = s.rstrip('-').strip()  # double strip for cases like R450,00-
     if s.endswith('+'):
         is_credit = True
-        s = s.rstrip('+').strip()
-    if s.endswith('Cr') or s.endswith('CR'):
-        s = s.rstrip('Cr').rstrip('CR').strip()
+        s = s[:-1].strip()
+    if s[-2:].lower() == 'cr':
+        s = s[:-2].strip()
         is_credit = True
     s = s.replace('R','').replace('r','').replace(' ','').strip()
     # After stripping R and spaces, may still have trailing - or + from original like 450,00- -> 450,00- still? Handle again
@@ -87,7 +89,9 @@ def parse_sa_amount(raw: str) -> int:
     except (InvalidOperation, ValueError):
         raise ValueError(f"Cannot parse amount: {raw}")
 
-def fingerprint_txn(date: str, amount_minor: int, desc_norm: str) -> str:
+def fingerprint_txn(date: str, amount_minor: int, desc_norm: str,
+                    balance_after_minor=None) -> str:
     import hashlib
-    canonical = f"{date}|{amount_minor}|{desc_norm.lower().strip()}"
+    canonical = (f"{date}|{amount_minor}|{(desc_norm or '').lower().strip()}"
+                 f"|{balance_after_minor}")
     return hashlib.sha256(canonical.encode()).hexdigest()

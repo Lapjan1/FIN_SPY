@@ -1,0 +1,1 @@
+The file is hashed into an immutable vault.

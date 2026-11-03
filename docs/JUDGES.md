@@ -2,7 +2,7 @@
 
 Live app: https://web-production-74f81.up.railway.app
 Live API: https://finspy-production.up.railway.app (`/docs` for the API)
-Video: (link added on submit day) - watch this first if short on time.
+Video: https://youtu.be/7RpuGlK77rc - watch this first if short on time.
 
 > Cold start: the free tier sleeps. First page load can take ~60s to wake.
 > Everything after that is fast. This is a hosting tier, not the app.

@@ -1,0 +1,20 @@
+$ python scripts/verify_pack.py evidence-pack.zip
+Manifest version 1 generated 2026-11-03T01:39:01.630878+00:00
+Scope: account_number=None
+OK originals/b332121362689764e59dc541bed1168f775ba6fa5c3d580edd0f81e76f0dfb23.pdf b33212136268..
+OK powerbi/powerbi_pack_default-tenant_20261103_013901.xlsx 553c4f6de545..
+OK powerbi/csvs/fact_transactions.csv 0cc35e228a24..
+OK powerbi/csvs/fact_journal.csv fb907930f185..
+OK powerbi/csvs/dim_account.csv 8fdcbe1f6046..
+OK powerbi/csvs/dim_category.csv 5b1ff3297af4..
+OK powerbi/csvs/dim_entity.csv 0e110bfbb36a..
+OK powerbi/csvs/dim_document.csv fa82f05f1b4e..
+OK powerbi/csvs/dim_date.csv 40f0d50595f3..
+OK fin_spy_workbook_default-tenant_20261103_013901.xlsx 3d7844a518cc..
+OK auditor_export_default-tenant_20261103_013901.csv 65c5832fbf38..
+OK audit.json a7de1b08b680..
+OK extraction_runs.json f29b46030088..
+OK manifest hash f45dfa4c2d21..
+Note: This hash should be printed in PDF footer and verification page.
+PDF signature: Open report PDF signature panel (pyHanko PAdES) to confirm.
+PASS: evidence pack verified - court-ready chain OK

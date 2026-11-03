@@ -43,9 +43,6 @@ export default function TermsPage() {
       <h2 className="text-xl font-semibold mt-8">10. Contact</h2>
       <p className="text-gray-700 leading-7">For questions email admin@fin-spy.example.</p>
 
-      <footer className="text-center py-8 text-sm text-gray-500">
-        <a href="/privacy" className="underline">Privacy</a> · <a href="/terms" className="underline">Terms</a> · <a href="/refund" className="underline">Refund</a>
-      </footer>
     </main>
   );
 }

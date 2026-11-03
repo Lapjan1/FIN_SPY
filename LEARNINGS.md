@@ -495,3 +495,15 @@ Symptom: Realistic-Cr synthetic chained 0/5 in generic (below bar) while the sam
 Cause: show_side_by_side.py's PyMuPDF branch used y=750-descending (bottom-left assumption) but PyMuPDF insert_text uses a top-left origin, so the page stacked inverted; the reportlab branch (bottom-left, correct) masked it whenever it ran. The extractor's ascending-y grouping is top-first-correct - it faithfully returned the inverted page bottom-up.
 Fix: PyMuPDF branch y=92-ascending + origin comment; golden#1 (recon pass over deterministic_parse) is the regression test - it fails on inverted streams. Always probe L001/LAST text after regenerating a fixture PDF.
 Applies when: Generating or regenerating any PDF fixture - verify visual order, never assume the author's y-origin.
+
+## 2026-11-02-85 PowerShell double quotes eat backticks in python -c
+Symptom: docs/API.md append landed with stray backslashes, then missing backticks after cleanup.
+Cause: In PS 5.1 double-quoted strings the backtick is the escape character, so python -c source containing backticks arrives mangled at Python; the damage then needs byte-archaeology to diagnose.
+Fix: Never pass backticks/backslashes through python -c "..."; write the script with write_file and run the file (backticks pass through tool JSON intact).
+Applies when: Any inline python needing literal backticks, backslashes, or quotes on Windows PowerShell.
+
+## 2026-11-02-86 curl.exe on PowerShell takes single quotes literally
+Symptom: Live probe POSTed JSON got 422 json_invalid ("Expecting property name enclosed in double quotes") twice with seemingly valid -d '{...}'.
+Cause: curl.exe is a native binary: PowerShell passes single-quoted strings WITH the quotes to the exe, so the body arrives as '{"a":...}' wrapped in literal single quotes. (Sibling of Learning 85: PS quoting vs the callee's parser.)
+Fix: Never inline JSON for curl.exe; write the body with write_file and use -d @file. Proved: same request via file returned the coded 401.
+Applies when: Any curl.exe POST/PUT with a JSON body from PowerShell.

@@ -130,3 +130,10 @@ def send_payment_failed_email(to_email: str, plan_code: str = "individual", tena
     body = f"Your payment for {plan_code} failed. Your subscription will be read-only after 7 days grace per refund policy.\n\nUpdate card: https://finspy-production.up.railway.app/account\n\n- FIN_SPY noreply"
     html = f"<p>Your payment for {plan_code} failed. Read-only after 7 days grace.</p><p><a href='https://finspy-production.up.railway.app/account'>Update card</a></p>"
     return send_email(to_email, subject, body, html, tenant_id=tenant_id)
+
+def send_feedback_notify(to_email: str, fid: str, tenant_id: str, user_id: int, category: str, subject: str, message: str, document_id=None):
+    masked_tenant = (tenant_id or "")[:8]
+    ref = f" doc {str(document_id)[:8]}.." if document_id else ""
+    title = f"FIN_SPY feedback [{category}] {fid}"
+    body = f"{title}\nFrom tenant {masked_tenant}.. user {user_id}{ref}\nSubject: {subject}\n\n{message}\n\nReply in-app; never forward reporter text to any model without explicit approval."
+    return send_email(to_email, title, body, tenant_id=tenant_id)

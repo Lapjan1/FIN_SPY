@@ -513,6 +513,19 @@ def init_db():
         processed_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS feedback (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id INTEGER,
+        category TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        message TEXT NOT NULL,
+        document_id TEXT,
+        page_url TEXT,
+        created_at_utc TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_tenant ON feedback(tenant_id);
+
     CREATE TABLE IF NOT EXISTS partner_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         slug TEXT UNIQUE NOT NULL,

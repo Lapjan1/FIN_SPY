@@ -184,6 +184,17 @@ class ResetIn(BaseModel):
     token: str
     password: str = Field(..., min_length=6)
 
+FEEDBACK_CATEGORIES = ("bug", "bank-layout", "question", "other")
+FEEDBACK_PER_HOUR = 5
+
+
+class FeedbackIn(BaseModel):
+    category: str = "other"
+    subject: str = Field(..., min_length=1, max_length=120)
+    message: str = Field(..., min_length=10, max_length=4000)
+    document_id: Optional[str] = None
+    page_url: Optional[str] = None
+
 # --- Helpers ---
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "./data/vault"))
 
@@ -1088,6 +1099,45 @@ def chat(req: ChatRequest, user_id: int = Depends(require_login)):
         raise HTTPException(422, "Invalid parameters: messages must include a user message")
     from apps.worker.spy.chat import chat_answer
     return chat_answer(tenant_id, question)
+
+
+@app.post("/v1/feedback")
+def submit_feedback(inp: FeedbackIn, user_id: int = Depends(require_login)):
+    """User report channel: bug / bank-layout / question.
+
+    Authed, tenant-scoped, 5 per user per hour. Persists first
+    (DB-first), then notifies the owner address; a failed notify
+    never fails the submit. Reporter text is never forwarded
+    to any model.
+    """
+    if inp.category not in FEEDBACK_CATEGORIES:
+        raise HTTPException(422, f"Invalid parameters: category must be one of {', '.join(FEEDBACK_CATEGORIES)}")
+    db = get_db()
+    tenant_id = _tenant_of(user_id)
+    if inp.document_id:
+        doc = db.execute("SELECT id FROM source_documents WHERE id=? AND tenant_id=?", (inp.document_id, tenant_id)).fetchone()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    recent = db.execute("SELECT COUNT(*) c FROM feedback WHERE user_id=? AND created_at_utc > ?", (user_id, cutoff)).fetchone()
+    n = recent["c"] if isinstance(recent, dict) else recent[0]
+    if n >= FEEDBACK_PER_HOUR:
+        raise HTTPException(429, "Too many reports - max 5 per hour, try again later")
+    fid = hashlib.sha256(f"{tenant_id}{user_id}{os.urandom(8)}".encode()).hexdigest()[:16]
+    db.execute("INSERT INTO feedback (id, tenant_id, user_id, category, subject, message, document_id, page_url) VALUES (?,?,?,?,?,?,?,?)",
+               (fid, tenant_id, user_id, inp.category, inp.subject.strip(), inp.message.strip(), inp.document_id, inp.page_url))
+    db.commit()
+    owner = env_or_setting("admin_email", "")
+    emailed = False
+    if owner:
+        try:
+            from .email import send_feedback_notify
+            emailed = bool(send_feedback_notify(owner, fid, tenant_id, user_id, inp.category, inp.subject, inp.message, inp.document_id))
+        except Exception:
+            emailed = False
+    return {"id": fid, "emailed": emailed}
+
 
 @app.post("/v1/reports")
 def create_report(kind: str = "excel", account_number: Optional[str] = None, request: Request = None, user_id: int = Depends(require_subscription)):

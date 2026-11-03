@@ -28,3 +28,7 @@ hash-chained audit_log). Interactive schema at `/docs` when the API runs.
 
 - `GET /v1/audit/human-changes?from_utc=&to_utc=&actor_id=&transaction_id=&limit=` -> `{revisions[{field, old_value, new_value, reason, actor_email}], revision_count, journal_actions, journal_action_count}`. Newest first, bound params only.
 - `GET /v1/audit/verify` -> `{audit_chain {checked, ok, bad_id, head}, vault_files {checked, ok, missing, mismatched}, intact}`. Recomputes SHA256(prev||payload) per row + rehashes vault files.
+
+## Feedback - web at /contact, thin client in apps/web/src/lib/api.ts
+
+- `POST /v1/feedback` `{category bug|bank-layout|question|other, subject 1..120, message 10..4000, document_id?, page_url?}` -> `{id, emailed}`. Authed, tenant-scoped; unknown document_id -> 404; 5 per user per hour -> 429. Persists first, then notifies ADMIN_EMAIL; reporter text never forwarded to any model.

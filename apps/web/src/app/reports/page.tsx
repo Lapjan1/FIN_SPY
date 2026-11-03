@@ -123,7 +123,7 @@ function ReportsInner({ uid, me }: { uid: string; me: Me }) {
       <SessionBar me={me} />
       <h1 className="text-2xl font-bold">Reports</h1>
       <p className="text-sm text-slate-400">
-        Generated live from your books on every click. Nothing here is a sample.
+        Generated live from your books on every click. Nothing here is a sample. Numbers look off? <a href="/contact" className="text-blue-400 underline">Contact us</a>.
       </p>
       <div className="flex gap-3 text-sm items-end">
         <label className="space-y-1">

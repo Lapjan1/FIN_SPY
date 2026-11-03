@@ -193,7 +193,7 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
       <div>
         <h1 className="text-2xl font-bold">Review queue - accept or fix, every change keeps a reason</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Proposed and exception transactions. Accept posts the journal; editing amount or date reposts it and re-checks the chain. Nothing here deletes history.
+          Proposed and exception transactions. Accept posts the journal; editing amount or date reposts it and re-checks the chain. Nothing here deletes history. Rows missing or wrong? <a href="/contact" className="text-blue-400 underline">Contact us</a>.
         </p>
       </div>
 
@@ -213,7 +213,7 @@ function ReviewInner({ uid, me }: { uid: string; me: Me }) {
             Queue ({queue.length})
           </div>
           {queue.length === 0 && !loading ? (
-            <p className="p-4 text-sm text-slate-400">Empty - everything is already confirmed, or upload a statement first.</p>
+            <p className="p-4 text-sm text-slate-400">Empty - everything is already confirmed, or upload a statement first. Expected rows that never arrived? <a href="/contact" className="text-blue-400 underline">Contact us</a>.</p>
           ) : null}
           <ul className="divide-y divide-slate-800 max-h-[560px] overflow-auto">
             {queue.map((txn) => (

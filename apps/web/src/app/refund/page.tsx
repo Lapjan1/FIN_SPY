@@ -37,9 +37,6 @@ export default function RefundPage() {
       </ul>
       <p className="text-gray-700 leading-7">Metering counts statement uploads, AI tokens used, and exports generated, with per-account monthly caps. Estimated AI cost is tracked per document, with a global daily budget alarm and an automatic fallback to No-AI mode if the budget is exceeded.</p>
 
-      <footer className="text-center py-8 text-sm text-gray-500">
-        <a href="/privacy" className="underline">Privacy</a> · <a href="/terms" className="underline">Terms</a> · <a href="/refund" className="underline">Refund</a>
-      </footer>
     </main>
   );
 }

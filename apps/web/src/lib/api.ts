@@ -686,3 +686,20 @@ export type CancelResult = { ok: boolean; status: string; note?: string };
 export function cancelSubscription(userId: string): Promise<CancelResult> {
   return api<CancelResult>('/v1/billing/cancel', userId, { method: 'POST' });
 }
+
+export type FeedbackInput = {
+  category: 'bug' | 'bank-layout' | 'question' | 'other';
+  subject: string;
+  message: string;
+  document_id?: string;
+  page_url?: string;
+};
+
+export type FeedbackResult = { id: string; emailed: boolean };
+
+export function submitFeedback(userId: string, input: FeedbackInput): Promise<FeedbackResult> {
+  return api<FeedbackResult>('/v1/feedback', userId, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

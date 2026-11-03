@@ -113,6 +113,13 @@ export default function HelpPage() {
           <p>Hosted AI only ever processes what the task needs, and approval-gated where it matters. Nothing here is legal or tax advice - your accountant signs off, FIN_SPY supplies the evidence.</p>
         </div>
       </section>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-4">Something wrong or missing?</h2>
+        <div className="space-y-3 text-sm text-slate-300">
+          <p>Found a bug, a bank layout that extracts badly, or something we have not programmed yet? <a href="/contact" className={linkCls}>Contact us</a> - every report is read. New here? Start with <a href="/about" className={linkCls}>About FIN_SPY</a>.</p>
+        </div>
+      </section>
     </main>
   );
 }

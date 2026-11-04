@@ -120,15 +120,16 @@ docs/PLAN,MODULES,FLOWS,UI_SPEC,decisions,METHOD_STATEMENT
 - [ ] Video 2-3 min - hero flow in README, need recording after dashboard drill-to-bbox + signed pack verification green per docs/PLAN.md -- PARKED per owner 2026-10-30 (script ready docs/VIDEO_SCRIPT.md)
 - [x] Reports Excel live formulas + signed PAdES PDF pyHanko + FreeTSA + Evidence Pack ZIP + verify_pack.py independent verifier (LIVE: per-account packs, manifest scope, verifier echoes scope; signed PDF needs FINSPY_SIGN_* env) - apps/api/reports.py generate_powerbi_pack() Excel + CSVs + generate_excel_workbook() per Appendix G + generate_auditor_csv() per user decision export package auditor can use CSV to input in bookkeeping package, endpoints GET /v1/reports/powerbi 200 file_key counts fact_transactions 2 etc + GET /v1/reports/excel + GET /v1/reports/auditor-csv + POST /v1/reports?kind=powerbi immediate per homework Part 5.10, tested via scripts/gen_powerbi_demo.py counts fact_transactions 2 dim_account 1 etc
 
-## Current Progress v0.9.0 Day3 close (see STATE.md, CHANGELOG.md, docs/AUTH_PAYSTACK.md, docs/SETTINGS.md, docs/RECAP_DAY3.md)
-- DB: dual + hash-chain audit + isolation tests + indexes + star-schema views + journal balance constraint + per bank account number ledger no contamination per customer 20 private 100 business + PowerBI pack
-- Auth: bcrypt + FastAPI deps require_login/require_subscription + trial pages + reset token + fail-closed secret + email service wired with mock fallback (live audit shows `email.mock_sent`; Resend needs API key + verified domain, not yet configured)
-- Paystack: timing-safe verify + checkout/callback/webhook idempotent + plan mapping + free check before has_paystack + live deployment Online ready true backend pg + domain ACTIVE for Paystack live URL proof /health/ready + /privacy POPIA real markdown + uptime ping
-- Extraction: deterministic FNB/STDB/ABSA parsers per bank registry deviations + line-ID grounding + spans bbox + fingerprint dedup + reconciliation gate both directions top->bottom bottom->top totals =/- == balance + review queue + side-by-side viewer + encrypted PDFs + intake classifier bank statement duplicate exclude tamper + golden tests 99% accuracy
-- Tests: 89 passed (80 previous +9: 6 coa_templates incl. vendor export/rule/auto-book/presentation grouping + 3 three-books choice/totals-per-period/422 invalid-params)
-- Books: 3 locked templates personal (default) / sme_cc / mixed_sole_prop + active_template choice one at a time + per merchant per account rules + vendor export + auto-book journal on code match (presentation layer, execution on approval)
-- KPIs: explicit inflow=credit/outflow=debit flags + totals per period first, then percentages; dashboard ?from_date=&to_date=&account_number= with 422 validation, real totals not mock
-- Next: Day4 journal posting from rules + trial balance endpoint, Day6 dashboard drill, Day9 video + Day10 submit
+## Current Progress - Day9 close-out (refreshed 2026-11-04 at 989004a; STATE.md is source of truth - see STATE.md, CHANGELOG.md, docs/RECAP_DAY9.md, docs/HACKATHON_AUDIT.md)
+- Books Day4: ledger post/trial/repost/transfer, 9999 suspense + watchdog, classify suggest/decide, review UI, audit human-changes + verify
+- Extraction: FNB/STDB/ABSA deterministic + generic 95pc + LLM last-resort, line-ID grounding, chain recall 68/68 LIVE 2026-11-02, reconciliation gate both directions, fiction rows voided, rejected excluded from products
+- Intake forensic: statement gate 422, tamper verdicts, overlap NDUP/DUP-SKIP, per-account packs + scope labels, account boundary + channel (picker drives all downloads)
+- Spy/KPI/debt: detectors + leak score, KPIs from real period totals, snowball/avalanche, dashboard + drill, chat/settings session-gated
+- Reports: Excel live formulas + recalc note, auditor CSV, PowerBI pack, signed PDF (needs FINSPY_SIGN_* env), evidence-pack verifier
+- Billing: Paystack test checkout + signed webhooks live-proven on Railway both plans 2026-11-01, cancel endpoint, trial uploads metering
+- Tests: 370 green + tsc 0 (2026-11-01), chain-recall 266 runnable green + golden 5/5 (2026-11-02), 44/44 live GUI audit; audit score 81/100
+- Live: Railway sweet-healing API + web Online via `railway up --service` (GitHub frozen, local git only); GitLab mirrors HEAD
+- Next: Day10 submit (close-out pack + 2:23 demo mp4 verified 2026-11-04)
 
 ## License
 MIT

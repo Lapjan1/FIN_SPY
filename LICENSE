@@ -1,0 +1,22 @@
+FIN_SPY - Financial Surveillance & Peak Insights
+Copyright (c) 2026 J A Jansen trading as FIN_SPY Group.
+All rights reserved.
+
+This software and its documentation are proprietary and confidential.
+No part of this repository may be reproduced, distributed, modified,
+or used to provide a service to third parties without prior written
+permission from the copyright holder, except as follows:
+
+- Meta Platforms, Inc. and Cerebral Valley may exercise the rights
+  granted in the Meta Global AI Developer Hackathon submission
+  (competition entry, commit tagged hackathon-submit, November 2026).
+- Licensees with a separate written agreement are governed by it.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE
+FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF
+THE SOFTWARE. FIN_SPY supplies evidence and engineering analysis; it
+is not legal, tax, or financial advice - see docs/DISCLAIMER.md.
+
+Commercial note (not legal advice): have an attorney review this
+notice before first paying customer or investment round.

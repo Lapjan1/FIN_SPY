@@ -507,3 +507,15 @@ Symptom: Live probe POSTed JSON got 422 json_invalid ("Expecting property name e
 Cause: curl.exe is a native binary: PowerShell passes single-quoted strings WITH the quotes to the exe, so the body arrives as '{"a":...}' wrapped in literal single quotes. (Sibling of Learning 85: PS quoting vs the callee's parser.)
 Fix: Never inline JSON for curl.exe; write the body with write_file and use -d @file. Proved: same request via file returned the coded 401.
 Applies when: Any curl.exe POST/PUT with a JSON body from PowerShell.
+
+## 2026-11-03-87 A column in SELECTs is not a feature - check the writes
+Symptom: transactions.currency looked supported (selected in two queries, DEFAULT 'ZAR'); totals still hardcoded /100 + (R) everywhere.
+Cause: Schema presence was mistaken for feature presence; no insert path ever set the column and no consumer read it for math.
+Fix: When scoping data work, grep the writes (INSERT/UPDATE + producers) before the reads; add the red test against behavior, not schema.
+Applies when: Any "we already handle X" claim about a column, flag, or config value.
+
+## 2026-11-03-88 Verify-before-borrow on sibling projects
+Symptom: "Vibe Trading must have currency handling" assumption; exploration found tickers + quote floats only, no fiat module.
+Cause: Project-name similarity implied domain overlap that was never checked; the trading agent thinks in securities, not currencies.
+Fix: Grep the sibling for the exact mechanism (exponents/symbols/format) before designing around it; a 10-minute negative result beats a wrong foundation.
+Applies when: Any plan to learn from or reuse another local project.

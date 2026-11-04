@@ -11,6 +11,7 @@ from typing import Dict, List
 from datetime import datetime, timezone
 
 from .db import get_db
+from .money import currency_symbol, format_money, minor_to_major
 
 REPORTS_PATH = Path(os.getenv("REPORTS_PATH", "./data/reports"))
 REPORTS_PATH.mkdir(parents=True, exist_ok=True)
@@ -480,19 +481,21 @@ def generate_auditor_csv(tenant_id: str, account_number=None) -> Dict:
     # Write CSV with headers suitable for Pastel, Xero, QuickBooks, Sage import
     # Include private/business classification with business_pct for mixed exceptional startup per disclaimer
     with csv_path.open('w', newline='', encoding='utf-8') as f:
-        fieldnames = ["id","date","description","amount_minor","amount_rands","currency","direction","balance_after_minor","fingerprint","status","account_number","bank_name","branch_code","account_code","account_name","account_type","nature","business_pct","category_id","rationale","confidence","source","decided_by","document_id","original_filename","doc_sha256"]
+        fieldnames = ["id","date","description","amount_minor","amount_rands","currency","direction","balance_after_minor","fingerprint","status","account_number","bank_name","branch_code","account_code","account_name","account_type","nature","business_pct","category_id","rationale","confidence","source","decided_by","document_id","original_filename","doc_sha256","amount_display"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in rows:
-            # Convert amount_minor to Rands for auditor
-            amount_rands = r.get('amount_minor',0)/100 if r.get('amount_minor') else 0
+            # Exponent-aware majors per row currency; amount_rands key kept
+            # for importer compat, amount_display carries the symbol.
+            ccy = r.get('currency', 'ZAR') or 'ZAR'
+            amount_major = minor_to_major(r.get('amount_minor', 0) or 0, ccy)
             writer.writerow({
                 "id": r.get('id',''),
                 "date": r.get('date',''),
                 "description": r.get('description',''),
                 "amount_minor": r.get('amount_minor',''),
-                "amount_rands": f"{amount_rands:.2f}",
-                "currency": r.get('currency','ZAR'),
+                "amount_rands": f"{amount_major:.2f}",
+                "currency": ccy,
                 "direction": r.get('direction',''),
                 "balance_after_minor": r.get('balance_after_minor',''),
                 "fingerprint": r.get('fingerprint_sha256',''),
@@ -513,6 +516,7 @@ def generate_auditor_csv(tenant_id: str, account_number=None) -> Dict:
                 "document_id": r.get('document_id',''),
                 "original_filename": r.get('original_filename',''),
                 "doc_sha256": r.get('doc_sha256',''),
+                "amount_display": format_money(r.get('amount_minor', 0) or 0, ccy),
             })
 
     sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest() if csv_path.exists() else ""
@@ -646,13 +650,17 @@ def _wb_section(ws, start_row: int, title: str, codes, money_fmt=None):
     return r
 
 
-def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money_fmt=None):
+def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money_fmt=None, currency="ZAR"):
     ws = wb.add_worksheet("Cover")
     ws.write(0, 0, "FIN_SPY Workbook", bold)
     ws.write(1, 0, f"Tenant: {tenant_id}")
     ws.write(2, 0, f"Period: {from_date or '...'} to {to_date or '...'} (max 12 months)")
     ws.write(3, 0, f"Generated: {ts} UTC")
-    ws.write(4, 0, "Money in rands (R, 2 decimals); formulas live - edit Journal, totals follow.")
+    sym = currency_symbol(currency)
+    money_line = ("Money in rands (R, 2 decimals); formulas live - edit Journal, totals follow."
+                  if currency == "ZAR" else
+                  f"Money in {currency} ({sym}); formulas live - edit Journal, totals follow.")
+    ws.write(4, 0, money_line)
     ws.write(5, 0, "Totals show 0? Click Enable Editing, then press F9 (Excel)")
     ws.write(6, 0, "or Ctrl+Shift+F9 (LibreOffice) to calculate.")
     tot_d = _rands(sum(j.get("debit_minor", 0) for j in data["journal"]))
@@ -663,13 +671,13 @@ def _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money_f
         ("Journal lines", len(data["journal"])),
         ("Journal lines truncated", "yes" if data["jl_count"] > 5000 else "no"),
         ("Transactions", len(data["txns"])),
-        ("Debits (R)", tot_d), ("Credits (R)", tot_c),
+        (f"Debits ({sym})", tot_d), (f"Credits ({sym})", tot_c),
         ("Balanced", "yes" if tot_d == tot_c else "NO"),
         ("Accounts", len(data["accounts"])), ("Flags", len(data["flags"])),
         ("Documents", len(data["docs"])),
     ]):
         ws.write(ri, 0, k, bold)
-        if money_fmt is not None and k in ("Debits (R)", "Credits (R)"):
+        if money_fmt is not None and k in (f"Debits ({sym})", f"Credits ({sym})"):
             ws.write(ri, 1, v, money_fmt)
         else:
             ws.write(ri, 1, v)
@@ -840,7 +848,9 @@ def generate_excel_workbook(tenant_id: str, from_date: str | None = None,
     wb = xlsxwriter.Workbook(str(excel_path))
     bold = wb.add_format({"bold": True})
     money = wb.add_format({"num_format": "#,##0.00"})
-    _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money)
+    ccys = {t.get("currency", "ZAR") or "ZAR" for t in data["txns"]}
+    wb_ccy = ccys.pop() if len(ccys) == 1 else "ZAR"
+    _wb_cover_summary(wb, bold, tenant_id, ts, from_date, to_date, data, money, wb_ccy)
     _wb_txns_journal(wb, bold, data, money)
     _wb_trial(wb, bold, data["accounts"], money)
     pnl_net_xl = _wb_pnl(wb, bold, data["accounts"], money)

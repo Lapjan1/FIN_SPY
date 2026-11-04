@@ -890,7 +890,7 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
         if not cur.fetchone():
             raise HTTPException(422, f"Invalid parameters: account_number '{account_number}' does not exist for tenant. Seed COA and use an existing account.")
     # Load transactions for period (totals first)
-    q = "SELECT id, txn_date, description_raw, amount_minor, direction, account_number FROM transactions WHERE tenant_id=? AND status != 'rejected'"
+    q = "SELECT id, txn_date, description_raw, amount_minor, currency, direction, account_number FROM transactions WHERE tenant_id=? AND status != 'rejected'"
     params: list = [tenant_id]
     if from_date:
         q += " AND txn_date>=?"
@@ -913,10 +913,13 @@ def dashboard_summary(request: Request, from_date: Optional[str] = None, to_date
     trial = get_trial_pages_remaining(user_id)
     # Leak score: use subscription creep or outflow avg
     leak = kpis.get("subscription_creep_minor", 0) or 0
+    ccys = {t.get("currency") or "ZAR" for t in txns}
+    dash_ccy = ccys.pop() if len(ccys) == 1 else ("ZAR" if not ccys else "MULTI")
     return {
         "from_date": from_date,
         "to_date": to_date,
         "account_number": account_number,
+        "currency": dash_ccy,
         "active_template": active,
         "totals": kpis.get("totals"),
         "leak_score_per_month_minor": leak,
